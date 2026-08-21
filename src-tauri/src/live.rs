@@ -396,6 +396,72 @@ async fn grok_rpc() -> Result<Value, LiveError> {
     Ok(result)
 }
 
+async fn opencode(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveError> {
+    let api_key = std::env::var("OPENCODE_API_KEY").ok();
+    let manual_cookie = std::env::var("BURNRATE_OPENCODE_COOKIE").ok();
+    if api_key.is_none() && manual_cookie.is_none() {
+        return Err(LiveError::Missing);
+    }
+    let mut request = client
+        .get("https://opencode.ai/zen/go/v1/usage")
+        .header("Accept", "application/json")
+        .header("User-Agent", "Burnrate");
+    if let Some(key) = api_key {
+        request = request.bearer_auth(key);
+    }
+    if let Some(cookie) = manual_cookie {
+        request = request.header("Cookie", cookie);
+    }
+    let response = request.send().await.map_err(|_| LiveError::Request)?;
+    if !response.status().is_success() {
+        return Err(LiveError::Request);
+    }
+    let data = response
+        .json::<Value>()
+        .await
+        .map_err(|_| LiveError::Parse)?;
+    let rolling = data.get("rollingUsage").ok_or(LiveError::Parse)?;
+    let mut windows = vec![window(
+        "5h",
+        rolling
+            .get("usagePercent")
+            .and_then(Value::as_f64)
+            .ok_or(LiveError::Parse)?,
+        Some(
+            Utc::now()
+                + chrono::Duration::seconds(
+                    rolling
+                        .get("resetInSec")
+                        .and_then(Value::as_i64)
+                        .unwrap_or(0),
+                ),
+        ),
+    )];
+    if let Some(weekly) = data.get("weeklyUsage") {
+        if let Some(pct) = weekly.get("usagePercent").and_then(Value::as_f64) {
+            windows.push(window(
+                "Weekly",
+                pct,
+                Some(
+                    Utc::now()
+                        + chrono::Duration::seconds(
+                            weekly
+                                .get("resetInSec")
+                                .and_then(Value::as_i64)
+                                .unwrap_or(0),
+                        ),
+                ),
+            ));
+        }
+    }
+    Ok(snapshot(
+        ProviderId::Opencode,
+        profile,
+        Some("OpenCode Go".into()),
+        windows,
+    ))
+}
+
 pub async fn fetch_live() -> Vec<UsageSnapshot> {
     let client = match Client::builder().user_agent("Burnrate/0.1").build() {
         Ok(client) => client,
@@ -427,6 +493,15 @@ pub async fn fetch_live() -> Vec<UsageSnapshot> {
                 snapshots.push(value);
             }
             Err(_) => record_failure("grok"),
+        }
+    }
+    if can_try("opencode") {
+        match opencode("Personal", &client).await {
+            Ok(value) => {
+                record_success("opencode");
+                snapshots.push(value);
+            }
+            Err(_) => record_failure("opencode"),
         }
     }
     snapshots
