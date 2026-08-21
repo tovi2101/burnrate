@@ -145,6 +145,7 @@ export default function App() {
   const [activeProfiles, setActiveProfiles] = useState<Record<ProviderId, string>>({ claude: "Personal", codex: "Personal", grok: "Personal", cursor: "Personal", opencode: "Personal" });
   const visibleProviders = useMemo(() => PROVIDERS.filter((provider) => settings.enabled[provider.id]), [settings.enabled]);
   useEffect(() => { document.documentElement.dataset.theme = settings.theme; }, [settings.theme]);
+  useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => { const timer = window.setInterval(() => void refresh(), settings.refreshSeconds * 1000); return () => window.clearInterval(timer); }, [refresh, settings.refreshSeconds]);
   const snapshotFor = (provider: ProviderId) => snapshots.find((snapshot) => snapshot.provider === provider && (activeProfiles[provider] === "All" || snapshot.profile_name === activeProfiles[provider]));
   const changeSettings = (next: AppSettings) => setSettings(next);
