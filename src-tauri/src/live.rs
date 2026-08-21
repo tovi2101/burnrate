@@ -453,7 +453,9 @@ async fn opencode(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveE
             std::env::var("OPENCODE_API_KEY")
                 .ok()
                 .or_else(opencode_db_token),
-            std::env::var("BURNRATE_OPENCODE_COOKIE").ok(),
+            std::env::var("BURNRATE_OPENCODE_COOKIE")
+                .ok()
+                .or_else(|| profiles::manual_value(&ProviderId::Opencode)),
         )
     } else {
         let body = profile_json(&ProviderId::Opencode, profile)?;
@@ -547,7 +549,10 @@ fn opencode_db_token() -> Option<String> {
 
 async fn cursor(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveError> {
     let cookie = if profile == "Personal" {
-        std::env::var("BURNRATE_CURSOR_COOKIE").map_err(|_| LiveError::Missing)?
+        std::env::var("BURNRATE_CURSOR_COOKIE")
+            .ok()
+            .or_else(|| profiles::manual_value(&ProviderId::Cursor))
+            .ok_or(LiveError::Missing)?
     } else {
         profile_json(&ProviderId::Cursor, profile)?
             .get("cookie")

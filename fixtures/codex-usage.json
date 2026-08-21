@@ -1,7 +1,7 @@
 {
-  "user_id": "user-3NHV6FX640Kr4krFIB2RmoUZ",
-  "account_id": "c56bca6f-861f-4c9c-9e1c-3a3b7949807e",
-  "email": "eyeofthetigermalta@gmail.com",
+  "user_id": "user-fixture",
+  "account_id": "account-fixture",
+  "email": "user@example.invalid",
   "plan_type": "prolite",
   "rate_limit": {
     "allowed": true,

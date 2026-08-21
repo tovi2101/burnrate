@@ -24,6 +24,10 @@ fn index_account(provider: &ProviderId) -> String {
     format!("profiles:{}", provider_key(provider))
 }
 
+fn manual_account(provider: &ProviderId) -> String {
+    format!("manual:{}", provider_key(provider))
+}
+
 fn home_dir() -> PathBuf {
     if cfg!(windows) {
         std::env::var_os("USERPROFILE")
@@ -61,6 +65,7 @@ pub fn current_credential(provider: &ProviderId) -> Option<String> {
         }
         ProviderId::Cursor => std::env::var("BURNRATE_CURSOR_COOKIE")
             .ok()
+            .or_else(|| manual_value(provider))
             .map(|cookie| serde_json::json!({ "cookie": cookie }).to_string()),
         ProviderId::Opencode => std::env::var("OPENCODE_API_KEY")
             .ok()
@@ -79,8 +84,33 @@ pub fn current_credential(provider: &ProviderId) -> Option<String> {
                     )
                     .ok()
             })
-            .map(|api_key| serde_json::json!({ "api_key": api_key }).to_string()),
+            .map(|api_key| serde_json::json!({ "api_key": api_key }).to_string())
+            .or_else(|| {
+                manual_value(provider)
+                    .map(|cookie| serde_json::json!({ "cookie": cookie }).to_string())
+            }),
     }
+}
+
+pub fn manual_value(provider: &ProviderId) -> Option<String> {
+    Entry::new(SERVICE, &manual_account(provider))
+        .ok()?
+        .get_password()
+        .ok()
+}
+
+pub fn save_manual(provider: &ProviderId, value: &str) -> Result<(), String> {
+    if !matches!(provider, ProviderId::Cursor | ProviderId::Opencode) {
+        return Err("Manual web fallback is only available for Cursor and OpenCode".into());
+    }
+    let value = value.trim();
+    if value.is_empty() || value.len() > 16_384 {
+        return Err("Manual credential is invalid".into());
+    }
+    Entry::new(SERVICE, &manual_account(provider))
+        .map_err(|_| "OS keyring unavailable".to_string())?
+        .set_password(value)
+        .map_err(|_| "OS keyring write failed".to_string())
 }
 
 pub fn credential(provider: &ProviderId, name: &str) -> Option<String> {

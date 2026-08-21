@@ -57,7 +57,8 @@ pub fn run() {
             commands::get_settings,
             commands::save_profile,
             commands::delete_profile,
-            commands::list_profiles
+            commands::list_profiles,
+            commands::save_manual_credential
         ])
         .setup(|app| {
             let menu = tauri::menu::MenuBuilder::new(app)

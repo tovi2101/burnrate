@@ -94,3 +94,8 @@ pub fn delete_profile(provider: ProviderId, name: String) -> Result<(), String> 
 pub fn list_profiles(provider: ProviderId) -> Vec<String> {
     profiles::list(&provider)
 }
+
+#[tauri::command]
+pub fn save_manual_credential(provider: ProviderId, value: String) -> Result<(), String> {
+    profiles::save_manual(&provider, &value)
+}
