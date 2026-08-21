@@ -3,6 +3,8 @@
 use crate::backoff::FailureBackoff;
 use crate::models::*;
 use crate::profiles;
+use crate::providers::{Provider, ProviderError};
+use async_trait::async_trait;
 use chrono::{DateTime, TimeZone, Utc};
 use reqwest::{Client, StatusCode};
 use rusqlite::Connection;
@@ -723,4 +725,103 @@ pub fn detected() -> Vec<DetectedProvider> {
 
 pub fn rpc_probe_request(method: &str, id: u64) -> Value {
     json!({"jsonrpc":"2.0","id":id,"method":method,"params":{}})
+}
+
+pub struct ClaudeProvider {
+    pub client: Client,
+}
+pub struct CodexProvider {
+    pub client: Client,
+}
+pub struct GrokProvider {
+    pub client: Client,
+}
+pub struct CursorProvider {
+    pub client: Client,
+}
+pub struct OpencodeProvider {
+    pub client: Client,
+}
+
+fn detected_state(provider: ProviderId) -> Detection {
+    detected()
+        .into_iter()
+        .find(|item| item.provider == provider)
+        .map(|item| item.state)
+        .unwrap_or(Detection::NotLoggedIn)
+}
+
+fn provider_error(error: LiveError) -> ProviderError {
+    match error {
+        LiveError::Missing => ProviderError::NotLoggedIn,
+        LiveError::Parse => ProviderError::Parse,
+        LiveError::Request => ProviderError::Request,
+    }
+}
+
+#[async_trait]
+impl Provider for ClaudeProvider {
+    fn id(&self) -> ProviderId {
+        ProviderId::Claude
+    }
+    async fn detect(&self) -> Detection {
+        detected_state(self.id())
+    }
+    async fn fetch(&self, profile: &str) -> Result<UsageSnapshot, ProviderError> {
+        claude(profile, &self.client).await.map_err(provider_error)
+    }
+}
+
+#[async_trait]
+impl Provider for CodexProvider {
+    fn id(&self) -> ProviderId {
+        ProviderId::Codex
+    }
+    async fn detect(&self) -> Detection {
+        detected_state(self.id())
+    }
+    async fn fetch(&self, profile: &str) -> Result<UsageSnapshot, ProviderError> {
+        codex(profile, &self.client).await.map_err(provider_error)
+    }
+}
+
+#[async_trait]
+impl Provider for GrokProvider {
+    fn id(&self) -> ProviderId {
+        ProviderId::Grok
+    }
+    async fn detect(&self) -> Detection {
+        detected_state(self.id())
+    }
+    async fn fetch(&self, profile: &str) -> Result<UsageSnapshot, ProviderError> {
+        grok(profile, &self.client).await.map_err(provider_error)
+    }
+}
+
+#[async_trait]
+impl Provider for CursorProvider {
+    fn id(&self) -> ProviderId {
+        ProviderId::Cursor
+    }
+    async fn detect(&self) -> Detection {
+        detected_state(self.id())
+    }
+    async fn fetch(&self, profile: &str) -> Result<UsageSnapshot, ProviderError> {
+        cursor(profile, &self.client).await.map_err(provider_error)
+    }
+}
+
+#[async_trait]
+impl Provider for OpencodeProvider {
+    fn id(&self) -> ProviderId {
+        ProviderId::Opencode
+    }
+    async fn detect(&self) -> Detection {
+        detected_state(self.id())
+    }
+    async fn fetch(&self, profile: &str) -> Result<UsageSnapshot, ProviderError> {
+        opencode(profile, &self.client)
+            .await
+            .map_err(provider_error)
+    }
 }
