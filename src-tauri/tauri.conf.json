@@ -1,0 +1,15 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Burnrate",
+  "version": "0.1.0",
+  "identifier": "dev.burnrate.app",
+  "build": { "beforeDevCommand": "npm run dev", "devUrl": "http://localhost:5173", "frontendDist": "../dist" },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      { "label": "main", "title": "Burnrate", "width": 380, "height": 560, "resizable": false, "decorations": false, "transparent": true, "visible": false, "skipTaskbar": true }
+    ],
+    "security": { "csp": "default-src 'self'; connect-src 'self' https://api.anthropic.com https://platform.claude.com https://chatgpt.com https://auth.openai.com https://cli-chat-proxy.grok.com https://cursor.com https://opencode.ai" }
+  },
+  "bundle": { "active": true, "targets": "all", "icon": [] }
+}
