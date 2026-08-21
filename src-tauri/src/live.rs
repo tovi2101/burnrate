@@ -1,10 +1,12 @@
 //! Live provider adapters. Endpoint details intentionally mirror PROVIDERS.md; credentials are
 //! read only into memory and are never included in errors or logs.
+use crate::backoff::FailureBackoff;
 use crate::models::*;
 use chrono::{DateTime, TimeZone, Utc};
 use reqwest::{Client, StatusCode};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -15,6 +17,34 @@ pub enum LiveError {
     Request,
     #[error("response parse failed")]
     Parse,
+}
+
+static BACKOFF: OnceLock<Mutex<FailureBackoff>> = OnceLock::new();
+
+fn can_try(provider: &str) -> bool {
+    BACKOFF
+        .get_or_init(|| Mutex::new(FailureBackoff::default()))
+        .lock()
+        .map(|state| state.can_try(provider))
+        .unwrap_or(true)
+}
+
+fn record_success(provider: &str) {
+    if let Ok(mut state) = BACKOFF
+        .get_or_init(|| Mutex::new(FailureBackoff::default()))
+        .lock()
+    {
+        state.record_success(provider);
+    }
+}
+
+fn record_failure(provider: &str) {
+    if let Ok(mut state) = BACKOFF
+        .get_or_init(|| Mutex::new(FailureBackoff::default()))
+        .lock()
+    {
+        state.record_failure(provider);
+    }
 }
 
 fn home_dir() -> PathBuf {
@@ -278,14 +308,32 @@ pub async fn fetch_live() -> Vec<UsageSnapshot> {
         Err(_) => return Vec::new(),
     };
     let mut snapshots = Vec::new();
-    if let Ok(value) = claude("Personal", &client).await {
-        snapshots.push(value);
+    if can_try("claude") {
+        match claude("Personal", &client).await {
+            Ok(value) => {
+                record_success("claude");
+                snapshots.push(value);
+            }
+            Err(_) => record_failure("claude"),
+        }
     }
-    if let Ok(value) = codex("Personal", &client).await {
-        snapshots.push(value);
+    if can_try("codex") {
+        match codex("Personal", &client).await {
+            Ok(value) => {
+                record_success("codex");
+                snapshots.push(value);
+            }
+            Err(_) => record_failure("codex"),
+        }
     }
-    if let Ok(value) = grok("Personal", &client).await {
-        snapshots.push(value);
+    if can_try("grok") {
+        match grok("Personal", &client).await {
+            Ok(value) => {
+                record_success("grok");
+                snapshots.push(value);
+            }
+            Err(_) => record_failure("grok"),
+        }
     }
     snapshots
 }

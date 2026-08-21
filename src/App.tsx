@@ -149,7 +149,11 @@ export default function App() {
   useEffect(() => { document.documentElement.dataset.theme = settings.theme; }, [settings.theme]);
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => { const timer = window.setInterval(() => void refresh(), settings.refreshSeconds * 1000); return () => window.clearInterval(timer); }, [refresh, settings.refreshSeconds]);
-  const snapshotFor = (provider: ProviderId) => snapshots.find((snapshot) => snapshot.provider === provider && (activeProfiles[provider] === "All" || snapshot.profile_name === activeProfiles[provider]));
+  const snapshotFor = (provider: ProviderId) => {
+    const matches = snapshots.filter((snapshot) => snapshot.provider === provider && (activeProfiles[provider] === "All" || snapshot.profile_name === activeProfiles[provider]));
+    if (activeProfiles[provider] === "All" && matches.length > 1) return { ...matches[0], profile_name: "All", windows: matches.flatMap((snapshot) => snapshot.windows) };
+    return matches[0];
+  };
   const changeSettings = (next: AppSettings) => setSettings(next);
   const deleteProfile = (provider: ProviderId, profile: string) => { void invoke("delete_profile", { provider, name: profile }).catch(() => undefined); setProfiles((current) => ({ ...current, [provider]: current[provider].filter((item) => item !== profile) })); if (activeProfiles[provider] === profile) setActiveProfiles((current) => ({ ...current, [provider]: "Personal" })); };
   const saveProfile = (provider: ProviderId, profile: string) => { void invoke("save_profile", { provider, name: profile }).catch(() => undefined); setProfiles((current) => ({ ...current, [provider]: [...new Set([...current[provider], profile])] })); const source = snapshots.find((snapshot) => snapshot.provider === provider); if (source) setSnapshots((current) => [...current.filter((snapshot) => !(snapshot.provider === provider && snapshot.profile_name === profile)), { ...source, profile_name: profile }]); };
