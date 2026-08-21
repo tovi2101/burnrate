@@ -1,6 +1,5 @@
 references/
 fixtures/*.secret
-screenshots/
 target/
 node_modules/
 dist/
