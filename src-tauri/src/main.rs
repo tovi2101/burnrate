@@ -1,1 +1,3 @@
-fn main() { burnrate_lib::run(); }
+fn main() {
+    burnrate_lib::run();
+}

@@ -1,6 +1,6 @@
-mod commands;
-mod cache;
 mod backoff;
+mod cache;
+mod commands;
 mod live;
 mod models;
 mod providers;
@@ -14,10 +14,17 @@ use tokio::sync::RwLock;
 pub fn run() {
     let cached = cache::load();
     let lock_path = std::env::temp_dir().join("burnrate-single-instance.lock");
-    let lock = std::fs::OpenOptions::new().write(true).create_new(true).open(&lock_path);
-    if lock.is_err() { return; }
+    let lock = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&lock_path);
+    if lock.is_err() {
+        return;
+    }
     tauri::Builder::default()
-        .manage(AppState { snapshots: Arc::new(RwLock::new(cached)) })
+        .manage(AppState {
+            snapshots: Arc::new(RwLock::new(cached)),
+        })
         .invoke_handler(tauri::generate_handler![
             commands::get_snapshots,
             commands::refresh_snapshots,
@@ -37,24 +44,40 @@ pub fn run() {
                     .icon(icon)
                     .menu(&menu)
                     .on_menu_event(|app, event| match event.id().as_ref() {
-                        "open" => { if let Some(window) = app.get_webview_window("main") { let _ = window.show(); let _ = window.set_focus(); } }
+                        "open" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
                         "quit" => app.exit(0),
                         _ => {}
                     })
                     .on_tray_icon_event(|app, event| {
-                        if let tauri::tray::TrayIconEvent::Click { button: tauri::tray::MouseButton::Left, .. } = event {
-                            if let Some(window) = app.get_webview_window("main") { let _ = window.show(); let _ = window.set_focus(); }
+                        if let tauri::tray::TrayIconEvent::Click {
+                            button: tauri::tray::MouseButton::Left,
+                            ..
+                        } = event
+                        {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
                         }
                     })
                     .build(app)?;
             }
             if app.get_webview_window("main").is_none() {
-                let _ = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into())).build()?;
+                let _ =
+                    WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                        .build()?;
             }
             Ok(())
         })
         .run(tauri::generate_context!(), move |_app, event| {
-            if let tauri::RunEvent::Exit { .. } = event { let _ = std::fs::remove_file(&lock_path); }
+            if let tauri::RunEvent::Exit = event {
+                let _ = std::fs::remove_file(&lock_path);
+            }
         })
         .expect("error while running Burnrate");
 }
