@@ -4,6 +4,7 @@ use crate::backoff::FailureBackoff;
 use crate::models::*;
 use chrono::{DateTime, TimeZone, Utc};
 use reqwest::{Client, StatusCode};
+use rusqlite::Connection;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -397,7 +398,9 @@ async fn grok_rpc() -> Result<Value, LiveError> {
 }
 
 async fn opencode(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveError> {
-    let api_key = std::env::var("OPENCODE_API_KEY").ok();
+    let api_key = std::env::var("OPENCODE_API_KEY")
+        .ok()
+        .or_else(opencode_db_token);
     let manual_cookie = std::env::var("BURNRATE_OPENCODE_COOKIE").ok();
     if api_key.is_none() && manual_cookie.is_none() {
         return Err(LiveError::Missing);
@@ -460,6 +463,22 @@ async fn opencode(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveE
         Some("OpenCode Go".into()),
         windows,
     ))
+}
+
+fn opencode_db_token() -> Option<String> {
+    let path = home_dir()
+        .join(".local")
+        .join("share")
+        .join("opencode")
+        .join("opencode.db");
+    let connection = Connection::open(path).ok()?;
+    connection
+        .query_row(
+            "SELECT access_token FROM account ORDER BY time_updated DESC LIMIT 1",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
 }
 
 async fn cursor(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveError> {
