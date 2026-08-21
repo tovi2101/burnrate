@@ -462,6 +462,45 @@ async fn opencode(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveE
     ))
 }
 
+async fn cursor(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveError> {
+    let cookie = std::env::var("BURNRATE_CURSOR_COOKIE").map_err(|_| LiveError::Missing)?;
+    let response = client
+        .get("https://cursor.com/api/usage-summary")
+        .header("Accept", "application/json")
+        .header("Cookie", cookie)
+        .send()
+        .await
+        .map_err(|_| LiveError::Request)?;
+    if !response.status().is_success() {
+        return Err(LiveError::Request);
+    }
+    let data = response
+        .json::<Value>()
+        .await
+        .map_err(|_| LiveError::Parse)?;
+    let plan = data
+        .pointer("/individualUsage/plan")
+        .ok_or(LiveError::Parse)?;
+    let pct = plan
+        .get("totalPercentUsed")
+        .and_then(Value::as_f64)
+        .or_else(|| {
+            let used = plan.get("used").and_then(Value::as_f64)?;
+            let limit = plan.get("limit").and_then(Value::as_f64)?;
+            (limit > 0.0).then_some(used / limit * 100.0)
+        })
+        .ok_or(LiveError::Parse)?;
+    let reset = rfc3339(data.get("billingCycleEnd"));
+    Ok(snapshot(
+        ProviderId::Cursor,
+        profile,
+        data.get("membershipType")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        vec![window("Monthly", pct, reset)],
+    ))
+}
+
 pub async fn fetch_live() -> Vec<UsageSnapshot> {
     let client = match Client::builder().user_agent("Burnrate/0.1").build() {
         Ok(client) => client,
@@ -502,6 +541,15 @@ pub async fn fetch_live() -> Vec<UsageSnapshot> {
                 snapshots.push(value);
             }
             Err(_) => record_failure("opencode"),
+        }
+    }
+    if can_try("cursor") {
+        match cursor("Personal", &client).await {
+            Ok(value) => {
+                record_success("cursor");
+                snapshots.push(value);
+            }
+            Err(_) => record_failure("cursor"),
         }
     }
     snapshots
