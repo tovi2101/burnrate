@@ -8,6 +8,9 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use thiserror::Error;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::Command;
+use tokio::time::{timeout, Duration};
 
 #[derive(Debug, Error)]
 pub enum LiveError {
@@ -189,23 +192,56 @@ async fn codex(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveErro
         .unwrap_or_else(|| home_dir().join(".codex"));
     let body = read_json(&root.join("auth.json"))?;
     let tokens = body.get("tokens").ok_or(LiveError::Missing)?;
-    let token = tokens
+    let mut token = tokens
         .get("access_token")
         .and_then(Value::as_str)
-        .ok_or(LiveError::Missing)?;
+        .ok_or(LiveError::Missing)?
+        .to_owned();
+    let refresh = tokens.get("refresh_token").and_then(Value::as_str);
     let account = tokens
         .get("account_id")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let response = client
+    let mut response = client
         .get("https://chatgpt.com/backend-api/wham/usage")
-        .bearer_auth(token)
+        .bearer_auth(&token)
         .header("Accept", "application/json")
         .header("User-Agent", "CodexBar")
         .header("ChatGPT-Account-Id", account)
         .send()
         .await
         .map_err(|_| LiveError::Request)?;
+    if matches!(
+        response.status(),
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
+    ) {
+        if let Some(refresh_token) = refresh {
+            let refresh_response = client
+                .post("https://auth.openai.com/oauth/token")
+                .header("Content-Type", "application/json")
+                .json(&json!({ "client_id": "app_EMoamEEZ73f0CkXaXp7hrann", "grant_type": "refresh_token", "refresh_token": refresh_token, "scope": "openid profile email" }))
+                .send().await.map_err(|_| LiveError::Request)?;
+            if refresh_response.status().is_success() {
+                token = refresh_response
+                    .json::<Value>()
+                    .await
+                    .map_err(|_| LiveError::Parse)?
+                    .get("access_token")
+                    .and_then(Value::as_str)
+                    .ok_or(LiveError::Parse)?
+                    .to_owned();
+                response = client
+                    .get("https://chatgpt.com/backend-api/wham/usage")
+                    .bearer_auth(&token)
+                    .header("Accept", "application/json")
+                    .header("User-Agent", "CodexBar")
+                    .header("ChatGPT-Account-Id", account)
+                    .send()
+                    .await
+                    .map_err(|_| LiveError::Request)?;
+            }
+        }
+    }
     if !response.status().is_success() {
         return Err(LiveError::Request);
     }
@@ -232,6 +268,28 @@ async fn codex(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveErro
 }
 
 async fn grok(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveError> {
+    if let Ok(data) = grok_rpc().await {
+        let monthly = data
+            .pointer("/monthlyLimit/val")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0);
+        let used = data
+            .pointer("/usage/totalUsed/val")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0);
+        let pct = if monthly > 0.0 {
+            used / monthly * 100.0
+        } else {
+            0.0
+        };
+        let reset = rfc3339(data.pointer("/billingCycle/billingPeriodEnd"));
+        return Ok(snapshot(
+            ProviderId::Grok,
+            profile,
+            Some("SuperGrok".into()),
+            vec![window("Weekly", pct, reset)],
+        ));
+    }
     let root = std::env::var_os("GROK_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| home_dir().join(".grok"));
@@ -300,6 +358,42 @@ async fn grok(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveError
         Some("SuperGrok".into()),
         vec![window("Weekly", pct, reset)],
     ))
+}
+
+async fn grok_rpc() -> Result<Value, LiveError> {
+    let mut child = Command::new("grok")
+        .args(["agent", "stdio"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|_| LiveError::Missing)?;
+    let mut stdin = child.stdin.take().ok_or(LiveError::Request)?;
+    let initialize = json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"1","clientCapabilities":{"fs":{"readTextFile":false,"writeTextFile":false},"terminal":false}}});
+    let billing = json!({"jsonrpc":"2.0","id":2,"method":"x.ai/billing","params":{}});
+    stdin
+        .write_all(format!("{}\n{}\n", initialize, billing).as_bytes())
+        .await
+        .map_err(|_| LiveError::Request)?;
+    drop(stdin);
+    let stdout = child.stdout.take().ok_or(LiveError::Request)?;
+    let mut lines = BufReader::new(stdout).lines();
+    let result = timeout(Duration::from_secs(12), async {
+        while let Some(line) = lines.next_line().await.map_err(|_| LiveError::Request)? {
+            let message: Value = serde_json::from_str(&line).map_err(|_| LiveError::Parse)?;
+            if message.get("id").and_then(Value::as_i64) == Some(2) {
+                if message.get("error").is_some() {
+                    return Err(LiveError::Request);
+                }
+                return message.get("result").cloned().ok_or(LiveError::Parse);
+            }
+        }
+        Err(LiveError::Request)
+    })
+    .await
+    .map_err(|_| LiveError::Request)??;
+    let _ = child.kill().await;
+    Ok(result)
 }
 
 pub async fn fetch_live() -> Vec<UsageSnapshot> {
