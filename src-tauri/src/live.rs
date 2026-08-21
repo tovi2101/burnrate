@@ -251,7 +251,7 @@ async fn codex(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveErro
         .bearer_auth(&token)
         .header("Accept", "application/json")
         .header("User-Agent", "CodexBar")
-        .header("ChatGPT-Account-Id", account)
+        .header("ChatGPT-Account-Id", &account)
         .send()
         .await
         .map_err(|_| LiveError::Request)?;
@@ -289,7 +289,7 @@ async fn codex(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveErro
                     .bearer_auth(&token)
                     .header("Accept", "application/json")
                     .header("User-Agent", "CodexBar")
-                    .header("ChatGPT-Account-Id", account)
+                    .header("ChatGPT-Account-Id", &account)
                     .send()
                     .await
                     .map_err(|_| LiveError::Request)?;
@@ -605,10 +605,18 @@ pub async fn fetch_live() -> Vec<UsageSnapshot> {
         Err(_) => return Vec::new(),
     };
     let mut snapshots = Vec::new();
+    let claude_provider = ClaudeProvider {
+        client: client.clone(),
+    };
     for profile in profiles::list(&ProviderId::Claude) {
         let key = format!("claude:{profile}");
-        if can_try(&key) {
-            match claude(&profile, &client).await {
+        let available = if profile == "Personal" {
+            matches!(claude_provider.detect().await, Detection::Detected)
+        } else {
+            profiles::credential(&ProviderId::Claude, &profile).is_some()
+        };
+        if available && can_try(&key) {
+            match claude_provider.fetch(&profile).await {
                 Ok(value) => {
                     record_success(&key);
                     snapshots.push(value);
@@ -617,10 +625,18 @@ pub async fn fetch_live() -> Vec<UsageSnapshot> {
             }
         }
     }
+    let codex_provider = CodexProvider {
+        client: client.clone(),
+    };
     for profile in profiles::list(&ProviderId::Codex) {
         let key = format!("codex:{profile}");
-        if can_try(&key) {
-            match codex(&profile, &client).await {
+        let available = if profile == "Personal" {
+            matches!(codex_provider.detect().await, Detection::Detected)
+        } else {
+            profiles::credential(&ProviderId::Codex, &profile).is_some()
+        };
+        if available && can_try(&key) {
+            match codex_provider.fetch(&profile).await {
                 Ok(value) => {
                     record_success(&key);
                     snapshots.push(value);
@@ -629,10 +645,18 @@ pub async fn fetch_live() -> Vec<UsageSnapshot> {
             }
         }
     }
+    let grok_provider = GrokProvider {
+        client: client.clone(),
+    };
     for profile in profiles::list(&ProviderId::Grok) {
         let key = format!("grok:{profile}");
-        if can_try(&key) {
-            match grok(&profile, &client).await {
+        let available = if profile == "Personal" {
+            matches!(grok_provider.detect().await, Detection::Detected)
+        } else {
+            profiles::credential(&ProviderId::Grok, &profile).is_some()
+        };
+        if available && can_try(&key) {
+            match grok_provider.fetch(&profile).await {
                 Ok(value) => {
                     record_success(&key);
                     snapshots.push(value);
@@ -641,10 +665,18 @@ pub async fn fetch_live() -> Vec<UsageSnapshot> {
             }
         }
     }
+    let opencode_provider = OpencodeProvider {
+        client: client.clone(),
+    };
     for profile in profiles::list(&ProviderId::Opencode) {
         let key = format!("opencode:{profile}");
-        if can_try(&key) {
-            match opencode(&profile, &client).await {
+        let available = if profile == "Personal" {
+            matches!(opencode_provider.detect().await, Detection::Detected)
+        } else {
+            profiles::credential(&ProviderId::Opencode, &profile).is_some()
+        };
+        if available && can_try(&key) {
+            match opencode_provider.fetch(&profile).await {
                 Ok(value) => {
                     record_success(&key);
                     snapshots.push(value);
@@ -653,10 +685,18 @@ pub async fn fetch_live() -> Vec<UsageSnapshot> {
             }
         }
     }
+    let cursor_provider = CursorProvider {
+        client: client.clone(),
+    };
     for profile in profiles::list(&ProviderId::Cursor) {
         let key = format!("cursor:{profile}");
-        if can_try(&key) {
-            match cursor(&profile, &client).await {
+        let available = if profile == "Personal" {
+            matches!(cursor_provider.detect().await, Detection::Detected)
+        } else {
+            profiles::credential(&ProviderId::Cursor, &profile).is_some()
+        };
+        if available && can_try(&key) {
+            match cursor_provider.fetch(&profile).await {
                 Ok(value) => {
                     record_success(&key);
                     snapshots.push(value);
@@ -712,19 +752,23 @@ pub fn detected() -> Vec<DetectedProvider> {
         },
         DetectedProvider {
             provider: ProviderId::Cursor,
-            state: Detection::NotLoggedIn,
+            state: if profiles::current_credential(&ProviderId::Cursor).is_some() {
+                Detection::Detected
+            } else {
+                Detection::NotLoggedIn
+            },
             profile_name: None,
         },
         DetectedProvider {
             provider: ProviderId::Opencode,
-            state: Detection::NotLoggedIn,
+            state: if profiles::current_credential(&ProviderId::Opencode).is_some() {
+                Detection::Detected
+            } else {
+                Detection::NotLoggedIn
+            },
             profile_name: None,
         },
     ]
-}
-
-pub fn rpc_probe_request(method: &str, id: u64) -> Value {
-    json!({"jsonrpc":"2.0","id":id,"method":method,"params":{}})
 }
 
 pub struct ClaudeProvider {

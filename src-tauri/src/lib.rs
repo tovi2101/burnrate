@@ -44,9 +44,9 @@ pub fn run() {
         .write(true)
         .create_new(true)
         .open(&lock_path);
-    if lock.is_err() {
-        return;
-    }
+    let Ok(lock) = lock else { return };
+    let lock_file = Arc::new(std::sync::Mutex::new(Some(lock)));
+    let cleanup_lock = Arc::clone(&lock_file);
     tauri::Builder::default()
         .manage(AppState {
             snapshots: Arc::new(RwLock::new(cached)),
@@ -60,19 +60,34 @@ pub fn run() {
             commands::list_profiles,
             commands::save_manual_credential
         ])
+        .plugin(
+            tauri::plugin::Builder::<_, ()>::new("lifecycle")
+                .on_event(move |_app, event| {
+                    if matches!(event, tauri::RunEvent::Exit) {
+                        if let Ok(mut file) = cleanup_lock.lock() {
+                            file.take();
+                        }
+                        let _ = std::fs::remove_file(&lock_path);
+                    }
+                })
+                .build(),
+        )
         .setup(|app| {
             let menu = tauri::menu::MenuBuilder::new(app)
                 .text("open", "Open Burnrate")
                 .separator()
                 .text("quit", "Quit")
                 .build()?;
-            let icon = app.default_window_icon().cloned().unwrap_or_else(tray_icon);
+            let icon = app
+                .default_window_icon()
+                .map(|icon| icon.clone().to_owned())
+                .unwrap_or_else(tray_icon);
             tauri::tray::TrayIconBuilder::with_id("burnrate")
                 .icon(icon)
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "open" => {
-                        if let Some(window) = app.get_webview_window("main") {
+                        if let Some(window) = app.app_handle().get_webview_window("main") {
                             let _ = window.show();
                             let _ = window.set_focus();
                         }
@@ -86,7 +101,7 @@ pub fn run() {
                         ..
                     } = event
                     {
-                        if let Some(window) = app.get_webview_window("main") {
+                        if let Some(window) = app.app_handle().get_webview_window("main") {
                             let _ = window.show();
                             let _ = window.set_focus();
                         }
@@ -100,10 +115,6 @@ pub fn run() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!(), move |_app, event| {
-            if let tauri::RunEvent::Exit = event {
-                let _ = std::fs::remove_file(&lock_path);
-            }
-        })
+        .run(tauri::generate_context!())
         .expect("error while running Burnrate");
 }

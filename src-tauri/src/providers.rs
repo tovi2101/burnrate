@@ -2,21 +2,16 @@ use crate::models::*;
 use async_trait::async_trait;
 use chrono::{DateTime, TimeZone, Utc};
 use serde_json::Value;
-use std::path::Path;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ProviderError {
     #[error("credentials are not available")]
     NotLoggedIn,
-    #[error("provider executable is not installed")]
-    NotInstalled,
     #[error("provider response could not be parsed")]
     Parse,
     #[error("provider request failed")]
     Request,
-    #[error("provider error")]
-    Other,
 }
 
 #[async_trait]
@@ -172,16 +167,4 @@ pub async fn mock_snapshots() -> Vec<UsageSnapshot> {
         MockProvider::codex("Personal"),
         MockProvider::grok("Personal"),
     ]
-}
-
-pub fn executable_exists(name: &str) -> bool {
-    std::env::var_os("PATH")
-        .into_iter()
-        .flat_map(|paths| std::env::split_paths(&paths).collect::<Vec<_>>())
-        .map(|path| path.join(name))
-        .any(|path| path.exists())
-}
-
-pub fn auth_file_exists(path: impl AsRef<Path>) -> bool {
-    path.as_ref().exists()
 }

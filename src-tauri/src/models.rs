@@ -11,18 +11,6 @@ pub enum ProviderId {
     Opencode,
 }
 
-impl ProviderId {
-    pub fn command(&self) -> &'static str {
-        match self {
-            Self::Claude => "claude auth login",
-            Self::Codex => "codex login",
-            Self::Grok => "grok login",
-            Self::Cursor => "cursor-agent login",
-            Self::Opencode => "opencode auth login",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageWindow {
     pub label: String,
