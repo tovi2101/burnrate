@@ -100,9 +100,9 @@ function BurnRate({ snapshot }: { snapshot: UsageSnapshot }) {
   return <div className="pace"><span className="pace-dot" /> at this pace: limit in <strong>{h ? `${h}h ${m}m` : `${m}m`}</strong><span className="pace-muted"> · last hour</span></div>;
 }
 
-function ProfilePicker({ provider, profile, onChange }: { provider: ProviderId; profile: string; onChange: (value: string) => void }) {
+function ProfilePicker({ profile, profiles, onChange }: { profile: string; profiles: string[]; onChange: (value: string) => void }) {
   const [open, setOpen] = useState(false);
-  const options = profile === "All" ? ["All", "Personal", "Work"] : [profile, "All", "Personal", "Work"].filter((item, index, list) => list.indexOf(item) === index);
+  const options = ["All", ...profiles, profile].filter((item, index, list) => list.indexOf(item) === index);
   return <div className="profile-picker">
     <button className="profile-button" onClick={() => setOpen(!open)} aria-expanded={open}><span className="profile-avatar">{profile.slice(0, 1)}</span><span>{profile}</span><ChevronDown size={13} /></button>
     {open && <>
@@ -112,7 +112,7 @@ function ProfilePicker({ provider, profile, onChange }: { provider: ProviderId; 
   </div>;
 }
 
-function ProviderCard({ providerId, snapshot, profile, onProfileChange }: { providerId: ProviderId; snapshot?: UsageSnapshot; profile: string; onProfileChange: (value: string) => void }) {
+function ProviderCard({ providerId, snapshot, profile, profiles, onProfileChange }: { providerId: ProviderId; snapshot?: UsageSnapshot; profile: string; profiles: string[]; onProfileChange: (value: string) => void }) {
   const provider = providerById(providerId);
   if (!snapshot) return <section className="provider-card empty-card" style={{ "--accent": provider.accent, "--soft-accent": provider.softAccent } as React.CSSProperties}>
     <div className="card-top"><div className="provider-heading"><span className="provider-mark">{provider.name.slice(0, 1)}</span><div><h2>{provider.name}</h2><p>Not connected</p></div></div><MoreHorizontal size={17} className="muted-icon" /></div>
@@ -121,7 +121,7 @@ function ProviderCard({ providerId, snapshot, profile, onProfileChange }: { prov
   const status: SnapshotStatus = snapshot.status;
   return <section className={`provider-card ${status !== "fresh" ? "is-stale" : ""}`} style={{ "--accent": provider.accent, "--soft-accent": provider.softAccent } as React.CSSProperties}>
     <div className="card-top"><div className="provider-heading"><span className="provider-mark">{provider.name.slice(0, 1)}</span><div><div className="title-line"><h2>{provider.name}</h2>{status === "fresh" ? <span className="fresh-pill">LIVE</span> : <span className="stale-pill">STALE SINCE {formatTime(snapshot.fetched_at)}</span>}</div><p>{snapshot.plan_name || "Usage"}</p></div></div><MoreHorizontal size={17} className="muted-icon" /></div>
-    <div className="card-controls"><ProfilePicker provider={providerId} profile={profile} onChange={onProfileChange} /><span className="card-updated">updated {formatTime(snapshot.fetched_at)}</span></div>
+    <div className="card-controls"><ProfilePicker profile={profile} profiles={profiles} onChange={onProfileChange} /><span className="card-updated">updated {formatTime(snapshot.fetched_at)}</span></div>
     <div className="usage-list">{snapshot.windows.map((window) => <UsageBar key={window.label} window={window} accent={provider.accent} />)}</div>
     <BurnRate snapshot={snapshot} />
   </section>;
@@ -147,17 +147,44 @@ export default function App() {
   const [activeProfiles, setActiveProfiles] = useState<Record<ProviderId, string>>({ claude: "Personal", codex: "Personal", grok: "Personal", cursor: "Personal", opencode: "Personal" });
   const visibleProviders = useMemo(() => PROVIDERS.filter((provider) => settings.enabled[provider.id]), [settings.enabled]);
   useEffect(() => { document.documentElement.dataset.theme = settings.theme; }, [settings.theme]);
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all(PROVIDERS.map(async (provider) => {
+      const result = await invoke<string[]>("list_profiles", { provider: provider.id }).catch(() => profiles[provider.id] || ["Personal"]);
+      return [provider.id, result.length ? result : ["Personal"]] as const;
+    })).then((entries) => {
+      if (!cancelled) setProfiles(Object.fromEntries(entries) as Record<ProviderId, string[]>);
+    });
+    return () => { cancelled = true; };
+  }, []);
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => { const timer = window.setInterval(() => void refresh(), settings.refreshSeconds * 1000); return () => window.clearInterval(timer); }, [refresh, settings.refreshSeconds]);
   const snapshotFor = (provider: ProviderId) => {
     const matches = snapshots.filter((snapshot) => snapshot.provider === provider && (activeProfiles[provider] === "All" || snapshot.profile_name === activeProfiles[provider]));
-    if (activeProfiles[provider] === "All" && matches.length > 1) return { ...matches[0], profile_name: "All", windows: matches.flatMap((snapshot) => snapshot.windows) };
+    if (activeProfiles[provider] === "All" && matches.length > 0) return { ...matches[0], profile_name: "All", windows: matches.flatMap((snapshot) => snapshot.windows) };
     return matches[0];
   };
   const changeSettings = (next: AppSettings) => setSettings(next);
-  const deleteProfile = (provider: ProviderId, profile: string) => { void invoke("delete_profile", { provider, name: profile }).catch(() => undefined); setProfiles((current) => ({ ...current, [provider]: current[provider].filter((item) => item !== profile) })); if (activeProfiles[provider] === profile) setActiveProfiles((current) => ({ ...current, [provider]: "Personal" })); };
-  const saveProfile = (provider: ProviderId, profile: string) => { void invoke("save_profile", { provider, name: profile }).catch(() => undefined); setProfiles((current) => ({ ...current, [provider]: [...new Set([...current[provider], profile])] })); const source = snapshots.find((snapshot) => snapshot.provider === provider); if (source) setSnapshots((current) => [...current.filter((snapshot) => !(snapshot.provider === provider && snapshot.profile_name === profile)), { ...source, profile_name: profile }]); };
+  const deleteProfile = (provider: ProviderId, profile: string) => {
+    const apply = () => {
+      setProfiles((current) => ({ ...current, [provider]: current[provider].filter((item) => item !== profile) }));
+      if (activeProfiles[provider] === profile) setActiveProfiles((current) => ({ ...current, [provider]: "Personal" }));
+    };
+    void invoke("delete_profile", { provider, name: profile }).then(apply).catch(() => {
+      if (!("__TAURI_INTERNALS__" in window)) apply();
+    });
+  };
+  const saveProfile = (provider: ProviderId, profile: string) => {
+    const apply = () => {
+      setProfiles((current) => ({ ...current, [provider]: [...new Set([...current[provider], profile])] }));
+      const source = snapshots.find((snapshot) => snapshot.provider === provider);
+      if (source) setSnapshots((current) => [...current.filter((snapshot) => !(snapshot.provider === provider && snapshot.profile_name === profile)), { ...source, profile_name: profile }]);
+    };
+    void invoke("save_profile", { provider, name: profile }).then(apply).catch(() => {
+      if (!("__TAURI_INTERNALS__" in window)) apply();
+    });
+  };
   return <main className="app-shell"><header className="app-header"><div className="brand"><span className="brand-glyph"><Sparkles size={14} /></span><span>Burnrate</span></div><div className="header-actions"><div className="tray-status"><span className="status-dot" />{snapshots.length ? "All systems normal" : "Waiting for logins"}</div><button className="icon-button" onClick={() => void refresh()} aria-label="Refresh" data-refreshing={refreshing}><RefreshCw size={16} /></button><button className="icon-button" onClick={() => setView(view === "settings" ? "overview" : "settings")} aria-label="Settings">{view === "settings" ? <X size={17} /> : <Settings2 size={17} />}</button></div></header>
-    {view === "overview" ? <><div className="hero"><div><span className="eyebrow">TODAY · {new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" }).format(new Date())}</span><h1>Usage at a glance<span className="cursor-blink">_</span></h1><p>Five providers. One calm little window.</p></div><div className="hero-meter"><div className="meter-ring"><span>{Math.round(snapshots.length ? snapshots.reduce((sum, snapshot) => sum + Math.max(...snapshot.windows.map((window) => window.used_pct), 0), 0) / snapshots.length : 0)}%</span></div><span>avg. used</span></div></div><div className="provider-rail">{visibleProviders.map((provider) => <div className="rail-item" key={provider.id}><span className="rail-label"><span className="rail-dot" style={{ background: provider.accent }} />{provider.name}</span><MiniBars snapshot={snapshotFor(provider.id)} /></div>)}</div><div className="cards">{visibleProviders.map((provider) => <ProviderCard key={provider.id} providerId={provider.id} snapshot={snapshotFor(provider.id)} profile={activeProfiles[provider.id]} onProfileChange={(profile) => setActiveProfiles((current) => ({ ...current, [provider.id]: profile }))} />)}</div><footer className="app-footer"><span><span className="footer-pulse" /> Last checked {formatTime(new Date().toISOString())}</span><button onClick={() => setView("settings")}><SlidersHorizontal size={13} /> customize</button></footer></> : <Settings settings={settings} onSettingsChange={changeSettings} profiles={profiles} onDelete={deleteProfile} onSave={saveProfile} />}
+    {view === "overview" ? <><div className="hero"><div><span className="eyebrow">TODAY · {new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" }).format(new Date())}</span><h1>Usage at a glance<span className="cursor-blink">_</span></h1><p>Five providers. One calm little window.</p></div><div className="hero-meter"><div className="meter-ring"><span>{Math.round(snapshots.length ? snapshots.reduce((sum, snapshot) => sum + Math.max(...snapshot.windows.map((window) => window.used_pct), 0), 0) / snapshots.length : 0)}%</span></div><span>avg. used</span></div></div><div className="provider-rail">{visibleProviders.map((provider) => <div className="rail-item" key={provider.id}><span className="rail-label"><span className="rail-dot" style={{ background: provider.accent }} />{provider.name}</span><MiniBars snapshot={snapshotFor(provider.id)} /></div>)}</div><div className="cards">{visibleProviders.map((provider) => <ProviderCard key={provider.id} providerId={provider.id} snapshot={snapshotFor(provider.id)} profile={activeProfiles[provider.id]} profiles={profiles[provider.id] || ["Personal"]} onProfileChange={(profile) => setActiveProfiles((current) => ({ ...current, [provider.id]: profile }))} />)}</div><footer className="app-footer"><span><span className="footer-pulse" /> Last checked {formatTime(new Date().toISOString())}</span><button onClick={() => setView("settings")}><SlidersHorizontal size={13} /> customize</button></footer></> : <Settings settings={settings} onSettingsChange={changeSettings} profiles={profiles} onDelete={deleteProfile} onSave={saveProfile} />}
     </main>;
 }

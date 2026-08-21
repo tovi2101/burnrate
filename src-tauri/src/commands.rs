@@ -1,10 +1,9 @@
 use crate::cache;
 use crate::live;
 use crate::models::*;
+use crate::profiles;
 use crate::providers;
-use keyring::Entry;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::State;
 use tokio::sync::RwLock;
@@ -76,68 +75,22 @@ pub fn get_settings() -> AppSettings {
 #[tauri::command]
 pub fn save_profile(provider: ProviderId, name: String) -> Result<(), String> {
     let name = name.trim();
-    if name.is_empty() || name.len() > 48 {
+    if name.is_empty()
+        || name.len() > 48
+        || name.eq_ignore_ascii_case("personal")
+        || name.eq_ignore_ascii_case("all")
+    {
         return Err("Profile name is invalid".into());
     }
-    let source =
-        credential_path(&provider).ok_or_else(|| "No CLI credential file found".to_string())?;
-    let contents = std::fs::read_to_string(source)
-        .map_err(|_| "Credential file could not be read".to_string())?;
-    let service = "dev.burnrate.app";
-    let account = format!("profile:{}:{}", provider_key(&provider), name);
-    Entry::new(service, &account)
-        .map_err(|_| "OS keyring unavailable".to_string())?
-        .set_password(&contents)
-        .map_err(|_| "OS keyring write failed".to_string())
+    profiles::save(&provider, name)
 }
 
 #[tauri::command]
 pub fn delete_profile(provider: ProviderId, name: String) -> Result<(), String> {
-    let account = format!("profile:{}:{}", provider_key(&provider), name.trim());
-    Entry::new("dev.burnrate.app", &account)
-        .map_err(|_| "OS keyring unavailable".to_string())?
-        .delete_credential()
-        .map_err(|_| "OS keyring delete failed".to_string())
+    profiles::delete(&provider, name.trim())
 }
 
 #[tauri::command]
 pub fn list_profiles(provider: ProviderId) -> Vec<String> {
-    // Keyring backends do not provide portable account enumeration. The current CLI login is
-    // always available as Personal; saved names are mirrored by the frontend until next launch.
-    let _ = provider;
-    vec!["Personal".into()]
-}
-
-fn provider_key(provider: &ProviderId) -> &'static str {
-    match provider {
-        ProviderId::Claude => "claude",
-        ProviderId::Codex => "codex",
-        ProviderId::Grok => "grok",
-        ProviderId::Cursor => "cursor",
-        ProviderId::Opencode => "opencode",
-    }
-}
-
-fn credential_path(provider: &ProviderId) -> Option<PathBuf> {
-    let home = if cfg!(windows) {
-        std::env::var_os("USERPROFILE").map(PathBuf::from)?
-    } else {
-        std::env::var_os("HOME").map(PathBuf::from)?
-    };
-    let path = match provider {
-        ProviderId::Claude => std::env::var_os("CLAUDE_CONFIG_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home.join(".claude"))
-            .join(".credentials.json"),
-        ProviderId::Codex => std::env::var_os("CODEX_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home.join(".codex"))
-            .join("auth.json"),
-        ProviderId::Grok => std::env::var_os("GROK_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home.join(".grok"))
-            .join("auth.json"),
-        ProviderId::Cursor | ProviderId::Opencode => return None,
-    };
-    path.exists().then_some(path)
+    profiles::list(&provider)
 }

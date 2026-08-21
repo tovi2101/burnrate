@@ -42,10 +42,11 @@ present. The exact commands are `cursor-agent login` and `opencode auth login`.
 ## Multiple accounts
 
 Use Settings → Profiles → “save current login as profile”. Burnrate snapshots the current CLI
-credential material into the OS keyring under a provider/name-scoped entry. It never writes those
-credentials to the repository, log, fixture, or quota cache. Profiles can be switched from a card;
-“All” keeps every saved profile visible in one provider card. Deleting a profile removes its keyring
-entry.
+credential material into the OS keyring under a provider/name-scoped entry, with a small keyring
+index for portable enumeration. Every saved profile is refreshed independently in the background;
+switching from a card is instant, and “All” stacks every saved profile for that provider. It never
+writes credentials to the repository, log, fixture, or quota cache. Deleting a profile removes its
+credential and index entry.
 
 ## Privacy and security
 

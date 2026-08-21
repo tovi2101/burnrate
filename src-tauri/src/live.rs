@@ -2,11 +2,12 @@
 //! read only into memory and are never included in errors or logs.
 use crate::backoff::FailureBackoff;
 use crate::models::*;
+use crate::profiles;
 use chrono::{DateTime, TimeZone, Utc};
 use reqwest::{Client, StatusCode};
 use rusqlite::Connection;
 use serde_json::{json, Value};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -63,9 +64,33 @@ fn home_dir() -> PathBuf {
     }
 }
 
-fn read_json(path: &Path) -> Result<Value, LiveError> {
-    let data = std::fs::read(path).map_err(|_| LiveError::Missing)?;
-    serde_json::from_slice(&data).map_err(|_| LiveError::Parse)
+fn profile_json(provider: &ProviderId, profile: &str) -> Result<Value, LiveError> {
+    let raw = profiles::credential(provider, profile).ok_or(LiveError::Missing)?;
+    serde_json::from_str(&raw).map_err(|_| LiveError::Parse)
+}
+
+fn persist_profile(provider: &ProviderId, profile: &str, body: &Value) {
+    if profile == "Personal" {
+        return;
+    }
+    if let Ok(raw) = serde_json::to_string(body) {
+        if let Ok(entry) = keyring::Entry::new(
+            "dev.burnrate.app",
+            &format!("profile:{}:{}", provider_key(provider), profile),
+        ) {
+            let _ = entry.set_password(&raw);
+        }
+    }
+}
+
+fn provider_key(provider: &ProviderId) -> &'static str {
+    match provider {
+        ProviderId::Claude => "claude",
+        ProviderId::Codex => "codex",
+        ProviderId::Grok => "grok",
+        ProviderId::Cursor => "cursor",
+        ProviderId::Opencode => "opencode",
+    }
 }
 
 fn rfc3339(value: Option<&Value>) -> Option<DateTime<Utc>> {
@@ -107,12 +132,11 @@ fn snapshot(
 }
 
 async fn claude(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveError> {
-    let path = std::env::var_os("CLAUDE_CONFIG_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home_dir().join(".claude"))
-        .join(".credentials.json");
-    let body = read_json(&path)?;
-    let oauth = body.get("claudeAiOauth").ok_or(LiveError::Missing)?;
+    let mut body = profile_json(&ProviderId::Claude, profile)?;
+    let oauth = body
+        .get("claudeAiOauth")
+        .cloned()
+        .ok_or(LiveError::Missing)?;
     let mut token = oauth
         .get("accessToken")
         .and_then(Value::as_str)
@@ -137,14 +161,29 @@ async fn claude(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveErr
                 .await
                 .map_err(|_| LiveError::Request)?;
             if response.status() == StatusCode::OK {
-                token = response
+                let refreshed = response
                     .json::<Value>()
                     .await
-                    .map_err(|_| LiveError::Parse)?
+                    .map_err(|_| LiveError::Parse)?;
+                token = refreshed
                     .get("access_token")
                     .and_then(Value::as_str)
                     .ok_or(LiveError::Parse)?
                     .into();
+                if let Some(oauth_body) = body.get_mut("claudeAiOauth") {
+                    if let Some(object) = oauth_body.as_object_mut() {
+                        object.insert("accessToken".into(), Value::String(token.clone()));
+                        if let Some(expires_in) =
+                            refreshed.get("expires_in").and_then(Value::as_i64)
+                        {
+                            object.insert(
+                                "expiresAt".into(),
+                                Value::from(Utc::now().timestamp_millis() + expires_in * 1000),
+                            );
+                        }
+                    }
+                }
+                persist_profile(&ProviderId::Claude, profile, &body);
             }
         }
     }
@@ -179,7 +218,8 @@ async fn claude(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveErr
     Ok(snapshot(
         ProviderId::Claude,
         profile,
-        oauth
+        body.get("claudeAiOauth")
+            .unwrap_or(&oauth)
             .get("subscriptionType")
             .and_then(Value::as_str)
             .map(str::to_owned),
@@ -188,21 +228,22 @@ async fn claude(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveErr
 }
 
 async fn codex(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveError> {
-    let root = std::env::var_os("CODEX_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home_dir().join(".codex"));
-    let body = read_json(&root.join("auth.json"))?;
-    let tokens = body.get("tokens").ok_or(LiveError::Missing)?;
+    let mut body = profile_json(&ProviderId::Codex, profile)?;
+    let tokens = body.get("tokens").cloned().ok_or(LiveError::Missing)?;
     let mut token = tokens
         .get("access_token")
         .and_then(Value::as_str)
         .ok_or(LiveError::Missing)?
         .to_owned();
-    let refresh = tokens.get("refresh_token").and_then(Value::as_str);
+    let refresh = tokens
+        .get("refresh_token")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     let account = tokens
         .get("account_id")
         .and_then(Value::as_str)
-        .unwrap_or_default();
+        .unwrap_or_default()
+        .to_owned();
     let mut response = client
         .get("https://chatgpt.com/backend-api/wham/usage")
         .bearer_auth(&token)
@@ -216,21 +257,31 @@ async fn codex(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveErro
         response.status(),
         StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
     ) {
-        if let Some(refresh_token) = refresh {
+        if let Some(refresh_token) = refresh.as_deref() {
             let refresh_response = client
                 .post("https://auth.openai.com/oauth/token")
                 .header("Content-Type", "application/json")
                 .json(&json!({ "client_id": "app_EMoamEEZ73f0CkXaXp7hrann", "grant_type": "refresh_token", "refresh_token": refresh_token, "scope": "openid profile email" }))
                 .send().await.map_err(|_| LiveError::Request)?;
             if refresh_response.status().is_success() {
-                token = refresh_response
+                let refreshed = refresh_response
                     .json::<Value>()
                     .await
-                    .map_err(|_| LiveError::Parse)?
+                    .map_err(|_| LiveError::Parse)?;
+                token = refreshed
                     .get("access_token")
                     .and_then(Value::as_str)
                     .ok_or(LiveError::Parse)?
                     .to_owned();
+                if let Some(tokens_body) = body.get_mut("tokens") {
+                    if let Some(object) = tokens_body.as_object_mut() {
+                        object.insert("access_token".into(), Value::String(token.clone()));
+                        if let Some(refresh_token) = refreshed.get("refresh_token") {
+                            object.insert("refresh_token".into(), refresh_token.clone());
+                        }
+                    }
+                }
+                persist_profile(&ProviderId::Codex, profile, &body);
                 response = client
                     .get("https://chatgpt.com/backend-api/wham/usage")
                     .bearer_auth(&token)
@@ -269,32 +320,31 @@ async fn codex(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveErro
 }
 
 async fn grok(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveError> {
-    if let Ok(data) = grok_rpc().await {
-        let monthly = data
-            .pointer("/monthlyLimit/val")
-            .and_then(Value::as_f64)
-            .unwrap_or(0.0);
-        let used = data
-            .pointer("/usage/totalUsed/val")
-            .and_then(Value::as_f64)
-            .unwrap_or(0.0);
-        let pct = if monthly > 0.0 {
-            used / monthly * 100.0
-        } else {
-            0.0
-        };
-        let reset = rfc3339(data.pointer("/billingCycle/billingPeriodEnd"));
-        return Ok(snapshot(
-            ProviderId::Grok,
-            profile,
-            Some("SuperGrok".into()),
-            vec![window("Weekly", pct, reset)],
-        ));
+    if profile == "Personal" {
+        if let Ok(data) = grok_rpc().await {
+            let monthly = data
+                .pointer("/monthlyLimit/val")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            let used = data
+                .pointer("/usage/totalUsed/val")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            let pct = if monthly > 0.0 {
+                used / monthly * 100.0
+            } else {
+                0.0
+            };
+            let reset = rfc3339(data.pointer("/billingCycle/billingPeriodEnd"));
+            return Ok(snapshot(
+                ProviderId::Grok,
+                profile,
+                Some("SuperGrok".into()),
+                vec![window("Weekly", pct, reset)],
+            ));
+        }
     }
-    let root = std::env::var_os("GROK_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home_dir().join(".grok"));
-    let body = read_json(&root.join("auth.json"))?;
+    let body = profile_json(&ProviderId::Grok, profile)?;
     let mut token = None;
     for entry in body
         .as_object()
@@ -398,10 +448,24 @@ async fn grok_rpc() -> Result<Value, LiveError> {
 }
 
 async fn opencode(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveError> {
-    let api_key = std::env::var("OPENCODE_API_KEY")
-        .ok()
-        .or_else(opencode_db_token);
-    let manual_cookie = std::env::var("BURNRATE_OPENCODE_COOKIE").ok();
+    let (api_key, manual_cookie) = if profile == "Personal" {
+        (
+            std::env::var("OPENCODE_API_KEY")
+                .ok()
+                .or_else(opencode_db_token),
+            std::env::var("BURNRATE_OPENCODE_COOKIE").ok(),
+        )
+    } else {
+        let body = profile_json(&ProviderId::Opencode, profile)?;
+        (
+            body.get("api_key")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            body.get("cookie")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+        )
+    };
     if api_key.is_none() && manual_cookie.is_none() {
         return Err(LiveError::Missing);
     }
@@ -482,7 +546,15 @@ fn opencode_db_token() -> Option<String> {
 }
 
 async fn cursor(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveError> {
-    let cookie = std::env::var("BURNRATE_CURSOR_COOKIE").map_err(|_| LiveError::Missing)?;
+    let cookie = if profile == "Personal" {
+        std::env::var("BURNRATE_CURSOR_COOKIE").map_err(|_| LiveError::Missing)?
+    } else {
+        profile_json(&ProviderId::Cursor, profile)?
+            .get("cookie")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or(LiveError::Missing)?
+    };
     let response = client
         .get("https://cursor.com/api/usage-summary")
         .header("Accept", "application/json")
@@ -526,49 +598,64 @@ pub async fn fetch_live() -> Vec<UsageSnapshot> {
         Err(_) => return Vec::new(),
     };
     let mut snapshots = Vec::new();
-    if can_try("claude") {
-        match claude("Personal", &client).await {
-            Ok(value) => {
-                record_success("claude");
-                snapshots.push(value);
+    for profile in profiles::list(&ProviderId::Claude) {
+        let key = format!("claude:{profile}");
+        if can_try(&key) {
+            match claude(&profile, &client).await {
+                Ok(value) => {
+                    record_success(&key);
+                    snapshots.push(value);
+                }
+                Err(_) => record_failure(&key),
             }
-            Err(_) => record_failure("claude"),
         }
     }
-    if can_try("codex") {
-        match codex("Personal", &client).await {
-            Ok(value) => {
-                record_success("codex");
-                snapshots.push(value);
+    for profile in profiles::list(&ProviderId::Codex) {
+        let key = format!("codex:{profile}");
+        if can_try(&key) {
+            match codex(&profile, &client).await {
+                Ok(value) => {
+                    record_success(&key);
+                    snapshots.push(value);
+                }
+                Err(_) => record_failure(&key),
             }
-            Err(_) => record_failure("codex"),
         }
     }
-    if can_try("grok") {
-        match grok("Personal", &client).await {
-            Ok(value) => {
-                record_success("grok");
-                snapshots.push(value);
+    for profile in profiles::list(&ProviderId::Grok) {
+        let key = format!("grok:{profile}");
+        if can_try(&key) {
+            match grok(&profile, &client).await {
+                Ok(value) => {
+                    record_success(&key);
+                    snapshots.push(value);
+                }
+                Err(_) => record_failure(&key),
             }
-            Err(_) => record_failure("grok"),
         }
     }
-    if can_try("opencode") {
-        match opencode("Personal", &client).await {
-            Ok(value) => {
-                record_success("opencode");
-                snapshots.push(value);
+    for profile in profiles::list(&ProviderId::Opencode) {
+        let key = format!("opencode:{profile}");
+        if can_try(&key) {
+            match opencode(&profile, &client).await {
+                Ok(value) => {
+                    record_success(&key);
+                    snapshots.push(value);
+                }
+                Err(_) => record_failure(&key),
             }
-            Err(_) => record_failure("opencode"),
         }
     }
-    if can_try("cursor") {
-        match cursor("Personal", &client).await {
-            Ok(value) => {
-                record_success("cursor");
-                snapshots.push(value);
+    for profile in profiles::list(&ProviderId::Cursor) {
+        let key = format!("cursor:{profile}");
+        if can_try(&key) {
+            match cursor(&profile, &client).await {
+                Ok(value) => {
+                    record_success(&key);
+                    snapshots.push(value);
+                }
+                Err(_) => record_failure(&key),
             }
-            Err(_) => record_failure("cursor"),
         }
     }
     snapshots

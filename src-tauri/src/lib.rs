@@ -3,6 +3,7 @@ mod cache;
 mod commands;
 mod live;
 mod models;
+mod profiles;
 mod providers;
 
 use commands::AppState;
