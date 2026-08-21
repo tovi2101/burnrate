@@ -120,7 +120,7 @@ function ProviderCard({ providerId, snapshot, profile, onProfileChange }: { prov
   </section>;
   const status: SnapshotStatus = snapshot.status;
   return <section className={`provider-card ${status !== "fresh" ? "is-stale" : ""}`} style={{ "--accent": provider.accent, "--soft-accent": provider.softAccent } as React.CSSProperties}>
-    <div className="card-top"><div className="provider-heading"><span className="provider-mark">{provider.name.slice(0, 1)}</span><div><div className="title-line"><h2>{provider.name}</h2>{status === "fresh" ? <span className="fresh-pill">LIVE</span> : <span className="stale-pill">STALE · {formatTime(snapshot.fetched_at)}</span>}</div><p>{snapshot.plan_name || "Usage"}</p></div></div><MoreHorizontal size={17} className="muted-icon" /></div>
+    <div className="card-top"><div className="provider-heading"><span className="provider-mark">{provider.name.slice(0, 1)}</span><div><div className="title-line"><h2>{provider.name}</h2>{status === "fresh" ? <span className="fresh-pill">LIVE</span> : <span className="stale-pill">STALE SINCE {formatTime(snapshot.fetched_at)}</span>}</div><p>{snapshot.plan_name || "Usage"}</p></div></div><MoreHorizontal size={17} className="muted-icon" /></div>
     <div className="card-controls"><ProfilePicker provider={providerId} profile={profile} onChange={onProfileChange} /><span className="card-updated">updated {formatTime(snapshot.fetched_at)}</span></div>
     <div className="usage-list">{snapshot.windows.map((window) => <UsageBar key={window.label} window={window} accent={provider.accent} />)}</div>
     <BurnRate snapshot={snapshot} />
