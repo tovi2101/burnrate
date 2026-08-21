@@ -1,0 +1,64 @@
+{
+  "user_id": "user-3NHV6FX640Kr4krFIB2RmoUZ",
+  "account_id": "c56bca6f-861f-4c9c-9e1c-3a3b7949807e",
+  "email": "eyeofthetigermalta@gmail.com",
+  "plan_type": "prolite",
+  "rate_limit": {
+    "allowed": true,
+    "limit_reached": false,
+    "primary_window": {
+      "used_percent": 11,
+      "limit_window_seconds": 604800,
+      "reset_after_seconds": 552740,
+      "reset_at": 1787904977
+    },
+    "secondary_window": null
+  },
+  "code_review_rate_limit": null,
+  "additional_rate_limits": [
+    {
+      "limit_name": "GPT-5.3-Codex-Spark",
+      "metered_feature": "codex_bengalfox",
+      "rate_limit": {
+        "allowed": true,
+        "limit_reached": false,
+        "primary_window": {
+          "used_percent": 0,
+          "limit_window_seconds": 18000,
+          "reset_after_seconds": 18000,
+          "reset_at": 1787370237
+        },
+        "secondary_window": {
+          "used_percent": 0,
+          "limit_window_seconds": 604800,
+          "reset_after_seconds": 604800,
+          "reset_at": 1787957037
+        }
+      }
+    }
+  ],
+  "credits": {
+    "has_credits": false,
+    "unlimited": false,
+    "overage_limit_reached": false,
+    "balance": "0",
+    "approx_local_messages": [
+      0,
+      0
+    ],
+    "approx_cloud_messages": [
+      0,
+      0
+    ]
+  },
+  "spend_control": {
+    "reached": false,
+    "individual_limit": null
+  },
+  "rate_limit_reached_type": null,
+  "promo": null,
+  "rate_limit_reset_credits": {
+    "available_count": 0,
+    "applicable_available_count": 0
+  }
+}
