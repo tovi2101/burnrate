@@ -13,8 +13,8 @@ pub enum ProviderError {
     Parse,
     #[error("provider request failed")]
     Request,
-    #[error("provider rate limited requests for {0:?}")]
-    RateLimited(Duration),
+    #[error("provider rate limited requests")]
+    RateLimited(Option<Duration>),
 }
 
 #[async_trait]

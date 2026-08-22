@@ -45,7 +45,8 @@ windows are omitted; a provider error keeps the last successful snapshot and mar
   `Content-Type: application/x-www-form-urlencoded` and `Accept: application/json`; body fields
   `grant_type=refresh_token`, `refresh_token=<refreshToken>`, and the public Claude Code OAuth
   `client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e`. Response fields are `access_token`, optional
-  `refresh_token`, and `expires_in` seconds. Persist refreshed credentials only in the OS keyring.
+  `refresh_token`, and `expires_in` seconds. Persist a refreshed current CLI login back to its
+  credential file; persist refreshed saved profiles to their OS-keyring entries.
 * Response fields: primary `five_hour.utilization` / `five_hour.resets_at`; weekly
   `seven_day.utilization` / `seven_day.resets_at`; optional `limits[]` entries (`kind`, `group`,
   `percent`, `resets_at`, `scope.model.display_name`, `is_active`); optional `extra_usage`.
@@ -147,4 +148,3 @@ windows are omitted; a provider error keeps the last successful snapshot and mar
 The authenticated responses captured before implementation are in `fixtures/claude-usage.json`,
 `fixtures/codex-usage.json`, `fixtures/grok-billing.json`, and the raw CLI probe in
 `fixtures/grok-agent-rpc.ndjson`. They contain no access, refresh, bearer, or cookie tokens.
-

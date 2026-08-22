@@ -40,27 +40,42 @@ fn home_dir() -> PathBuf {
     }
 }
 
+fn current_credential_path(provider: &ProviderId) -> Option<PathBuf> {
+    match provider {
+        ProviderId::Claude => Some(
+            std::env::var_os("CLAUDE_CONFIG_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home_dir().join(".claude"))
+                .join(".credentials.json"),
+        ),
+        ProviderId::Codex => Some(
+            std::env::var_os("CODEX_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home_dir().join(".codex"))
+                .join("auth.json"),
+        ),
+        ProviderId::Grok => Some(
+            std::env::var_os("GROK_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home_dir().join(".grok"))
+                .join("auth.json"),
+        ),
+        ProviderId::Cursor | ProviderId::Opencode => None,
+    }
+}
+
 pub fn current_credential(provider: &ProviderId) -> Option<String> {
     match provider {
         ProviderId::Claude => {
-            let path = std::env::var_os("CLAUDE_CONFIG_DIR")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| home_dir().join(".claude"))
-                .join(".credentials.json");
+            let path = current_credential_path(provider)?;
             std::fs::read_to_string(path).ok()
         }
         ProviderId::Codex => {
-            let path = std::env::var_os("CODEX_HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| home_dir().join(".codex"))
-                .join("auth.json");
+            let path = current_credential_path(provider)?;
             std::fs::read_to_string(path).ok()
         }
         ProviderId::Grok => {
-            let path = std::env::var_os("GROK_HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| home_dir().join(".grok"))
-                .join("auth.json");
+            let path = current_credential_path(provider)?;
             std::fs::read_to_string(path).ok()
         }
         ProviderId::Cursor => std::env::var("BURNRATE_CURSOR_COOKIE")
@@ -89,6 +104,19 @@ pub fn current_credential(provider: &ProviderId) -> Option<String> {
                 manual_value(provider)
                     .map(|cookie| serde_json::json!({ "cookie": cookie }).to_string())
             }),
+    }
+}
+
+pub fn persist_credential(provider: &ProviderId, name: &str, raw: &str) -> Result<(), String> {
+    if name == "Personal" {
+        let path = current_credential_path(provider)
+            .ok_or_else(|| "CLI credential path is unavailable".to_string())?;
+        std::fs::write(path, raw).map_err(|_| "CLI credential update failed".to_string())
+    } else {
+        Entry::new(SERVICE, &profile_account(provider, name))
+            .map_err(|_| "OS keyring unavailable".to_string())?
+            .set_password(raw)
+            .map_err(|_| "OS keyring write failed".to_string())
     }
 }
 

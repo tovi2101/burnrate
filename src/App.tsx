@@ -123,6 +123,7 @@ function ProviderCard({ providerId, snapshot, profile, profiles, onProfileChange
   return <section className={`provider-card ${status !== "fresh" ? "is-stale" : ""}`} style={{ "--accent": provider.accent, "--soft-accent": provider.softAccent } as React.CSSProperties}>
     <div className="card-top"><div className="provider-heading"><ProviderMark providerId={providerId} /><div className="provider-copy"><div className="title-line"><h2>{provider.name}</h2>{status === "fresh" ? <span className="fresh-pill">LIVE</span> : <span className="stale-pill">STALE SINCE {formatTime(snapshot.fetched_at)}</span>}</div><p>{snapshot.plan_name || "Usage"}</p></div></div>{profiles.length > 1 && <ProfilePicker profile={profile} profiles={profiles} onChange={onProfileChange} />}</div>
     <div className="usage-list">{snapshot.windows.map((window) => <UsageBar key={window.label} window={window} accent={provider.accent} />)}</div>
+    {snapshot.error_message && <div className="rate-limit-line"><Clock3 size={11} />{snapshot.error_message}</div>}
     <BurnRate snapshot={snapshot} />
   </section>;
 }

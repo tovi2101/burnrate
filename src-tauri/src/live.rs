@@ -5,20 +5,18 @@ use crate::models::*;
 use crate::profiles;
 use crate::providers::{Provider, ProviderError};
 use async_trait::async_trait;
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{DateTime, Local, TimeZone, Utc};
 use reqwest::{header::RETRY_AFTER, Client, Response, StatusCode};
 use rusqlite::Connection;
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::time::timeout;
-
-const DEFAULT_RATE_LIMIT_BACKOFF: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum LiveError {
@@ -26,8 +24,8 @@ pub enum LiveError {
     Missing,
     #[error("request failed")]
     Request,
-    #[error("rate limited for {0:?}")]
-    RateLimited(Duration),
+    #[error("rate limited")]
+    RateLimited(Option<Duration>),
     #[error("response parse failed")]
     Parse,
 }
@@ -68,16 +66,25 @@ fn record_failure(provider: &str) {
     }
 }
 
-fn record_rate_limit(provider: &str, retry_after: Duration) {
+fn record_rate_limit(provider: &str, retry_after: Option<Duration>) -> DateTime<Utc> {
     if let Ok(mut state) = BACKOFF
         .get_or_init(|| Mutex::new(FailureBackoff::default()))
         .lock()
     {
-        state.record_rate_limit(provider, retry_after);
+        return state.record_rate_limit(provider, retry_after);
     }
+    Utc::now() + chrono::Duration::minutes(5)
 }
 
-fn retry_after(response: &Response) -> Duration {
+fn rate_limit_retry_at(provider: &str) -> Option<DateTime<Utc>> {
+    BACKOFF
+        .get_or_init(|| Mutex::new(FailureBackoff::default()))
+        .lock()
+        .ok()
+        .and_then(|state| state.rate_limit_retry_at(provider))
+}
+
+fn retry_after(response: &Response) -> Option<Duration> {
     response
         .headers()
         .get(RETRY_AFTER)
@@ -96,7 +103,6 @@ fn retry_after(response: &Response) -> Duration {
                     })
                 })
         })
-        .unwrap_or(DEFAULT_RATE_LIMIT_BACKOFF)
 }
 
 fn response_error(response: &Response) -> Option<LiveError> {
@@ -127,16 +133,8 @@ fn profile_json(provider: &ProviderId, profile: &str) -> Result<Value, LiveError
 }
 
 fn persist_profile(provider: &ProviderId, profile: &str, body: &Value) {
-    if profile == "Personal" {
-        return;
-    }
     if let Ok(raw) = serde_json::to_string(body) {
-        if let Ok(entry) = keyring::Entry::new(
-            "dev.burnrate.app",
-            &format!("profile:{}:{}", provider_key(provider), profile),
-        ) {
-            let _ = entry.set_password(&raw);
-        }
+        let _ = profiles::persist_credential(provider, profile, &raw);
     }
 }
 
@@ -188,7 +186,155 @@ fn snapshot(
     }
 }
 
-async fn claude(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveError> {
+fn claude_credential_identity(body: &Value) -> String {
+    let oauth = body.get("claudeAiOauth").unwrap_or(&Value::Null);
+    [
+        "accountUuid",
+        "organizationUuid",
+        "refreshToken",
+        "accessToken",
+    ]
+    .into_iter()
+    .find_map(|field| oauth.get(field).and_then(Value::as_str))
+    .unwrap_or("unknown")
+    .to_owned()
+}
+
+fn claude_account_label(identity: &str) -> String {
+    static LABELS: OnceLock<Mutex<HashMap<String, usize>>> = OnceLock::new();
+    let Ok(mut labels) = LABELS.get_or_init(|| Mutex::new(HashMap::new())).lock() else {
+        return "redacted".into();
+    };
+    let next = labels.len() + 1;
+    let label = *labels.entry(identity.to_owned()).or_insert(next);
+    format!("account-{label}")
+}
+
+fn log_claude_outbound(kind: &str, profile: &str, identity: &str) {
+    eprintln!(
+        "claude-outbound timestamp={} kind={} profile={} account={}",
+        Utc::now().to_rfc3339(),
+        kind,
+        profile,
+        claude_account_label(identity)
+    );
+}
+
+fn log_claude_response(kind: &str, profile: &str, response: &Response) {
+    let retry_seconds = (response.status() == StatusCode::TOO_MANY_REQUESTS)
+        .then(|| retry_after(response).map(|delay| delay.as_secs()))
+        .flatten();
+    eprintln!(
+        "claude-response timestamp={} kind={} profile={} status={} retry_after_seconds={}",
+        Utc::now().to_rfc3339(),
+        kind,
+        profile,
+        response.status().as_u16(),
+        retry_seconds
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "none".into())
+    );
+}
+
+struct PreparedClaude {
+    profile: String,
+    body: Value,
+    token: String,
+    account_key: String,
+}
+
+static CLAUDE_IDENTITY_CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+static CLAUDE_RECENT_ATTEMPTS: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+static CLAUDE_REJECTED_REFRESH_TOKENS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+static CLAUDE_FETCH_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+
+fn cached_claude_identity(token: &str) -> Option<String> {
+    CLAUDE_IDENTITY_CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .ok()
+        .and_then(|cache| cache.get(token).cloned())
+}
+
+fn cache_claude_identity(token: &str, identity: &str) {
+    if let Ok(mut cache) = CLAUDE_IDENTITY_CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+    {
+        cache.insert(token.to_owned(), identity.to_owned());
+    }
+}
+
+fn claude_profile_identity(data: &Value) -> Option<String> {
+    data.pointer("/organization/uuid")
+        .or_else(|| data.get("organizationUuid"))
+        .or_else(|| data.get("organization_uuid"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| format!("organization:{}", value.trim().to_ascii_lowercase()))
+        .or_else(|| {
+            data.pointer("/account/email_address")
+                .or_else(|| data.pointer("/account/emailAddress"))
+                .or_else(|| data.pointer("/account/email"))
+                .or_else(|| data.get("email_address"))
+                .or_else(|| data.get("emailAddress"))
+                .or_else(|| data.get("email"))
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(|value| format!("email:{}", value.trim().to_ascii_lowercase()))
+        })
+}
+
+fn claude_attempt_recent(account_key: &str) -> bool {
+    CLAUDE_RECENT_ATTEMPTS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .ok()
+        .and_then(|attempts| attempts.get(account_key).copied())
+        .map(|attempt| attempt.elapsed() < Duration::from_secs(30))
+        .unwrap_or(false)
+}
+
+fn mark_claude_attempt(account_key: &str) {
+    if let Ok(mut attempts) = CLAUDE_RECENT_ATTEMPTS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+    {
+        attempts.insert(account_key.to_owned(), Instant::now());
+    }
+}
+
+fn claude_refresh_is_rejected(refresh_token: &str) -> bool {
+    CLAUDE_REJECTED_REFRESH_TOKENS
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .map(|tokens| tokens.contains(refresh_token))
+        .unwrap_or(false)
+}
+
+fn reject_claude_refresh_token(refresh_token: &str) {
+    if let Ok(mut tokens) = CLAUDE_REJECTED_REFRESH_TOKENS
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+    {
+        tokens.insert(refresh_token.to_owned());
+    }
+}
+
+fn group_prepared_claude(
+    prepared_profiles: Vec<PreparedClaude>,
+) -> HashMap<String, Vec<PreparedClaude>> {
+    let mut groups: HashMap<String, Vec<PreparedClaude>> = HashMap::new();
+    for prepared in prepared_profiles {
+        groups
+            .entry(prepared.account_key.clone())
+            .or_default()
+            .push(prepared);
+    }
+    groups
+}
+
+async fn prepare_claude(profile: &str, client: &Client) -> Result<PreparedClaude, LiveError> {
     let mut body = profile_json(&ProviderId::Claude, profile)?;
     let oauth = body
         .get("claudeAiOauth")
@@ -204,8 +350,20 @@ async fn claude(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveErr
         .and_then(Value::as_i64)
         .map(|value| value <= Utc::now().timestamp_millis() + 30_000)
         .unwrap_or(false);
+    let initial_identity = claude_credential_identity(&body);
+    eprintln!(
+        "claude-poll timestamp={} profile={} account={} token_refresh_needed={}",
+        Utc::now().to_rfc3339(),
+        profile,
+        claude_account_label(&initial_identity),
+        expired
+    );
     if expired {
         if let Some(refresh) = oauth.get("refreshToken").and_then(Value::as_str) {
+            if claude_refresh_is_rejected(refresh) {
+                return Err(LiveError::Missing);
+            }
+            log_claude_outbound("oauth_refresh", profile, &initial_identity);
             let response = client
                 .post("https://platform.claude.com/v1/oauth/token")
                 .header("Accept", "application/json")
@@ -217,10 +375,20 @@ async fn claude(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveErr
                 .send()
                 .await
                 .map_err(|_| LiveError::Request)?;
+            log_claude_response("oauth_refresh", profile, &response);
             if response.status() == StatusCode::TOO_MANY_REQUESTS {
                 return Err(LiveError::RateLimited(retry_after(&response)));
             }
-            if response.status() == StatusCode::OK {
+            if !response.status().is_success() {
+                if matches!(
+                    response.status(),
+                    StatusCode::BAD_REQUEST | StatusCode::UNAUTHORIZED
+                ) {
+                    reject_claude_refresh_token(refresh);
+                }
+                return Err(LiveError::Request);
+            }
+            if response.status().is_success() {
                 let refreshed = response
                     .json::<Value>()
                     .await
@@ -241,15 +409,66 @@ async fn claude(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveErr
                                 Value::from(Utc::now().timestamp_millis() + expires_in * 1000),
                             );
                         }
+                        if let Some(refresh_token) =
+                            refreshed.get("refresh_token").and_then(Value::as_str)
+                        {
+                            object.insert(
+                                "refreshToken".into(),
+                                Value::String(refresh_token.to_owned()),
+                            );
+                        }
                     }
                 }
                 persist_profile(&ProviderId::Claude, profile, &body);
             }
         }
     }
+    let account_key = if let Some(identity) = cached_claude_identity(&token) {
+        identity
+    } else {
+        let credential_identity = claude_credential_identity(&body);
+        log_claude_outbound("profile", profile, &credential_identity);
+        let response = client
+            .get("https://api.anthropic.com/api/oauth/profile")
+            .bearer_auth(&token)
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/json")
+            .send()
+            .await
+            .map_err(|_| LiveError::Request)?;
+        log_claude_response("profile", profile, &response);
+        if response.status() == StatusCode::TOO_MANY_REQUESTS {
+            return Err(LiveError::RateLimited(retry_after(&response)));
+        }
+        let identity = if response.status().is_success() {
+            response
+                .json::<Value>()
+                .await
+                .ok()
+                .and_then(|data| claude_profile_identity(&data))
+                .unwrap_or(credential_identity)
+        } else {
+            credential_identity
+        };
+        cache_claude_identity(&token, &identity);
+        identity
+    };
+    Ok(PreparedClaude {
+        profile: profile.to_owned(),
+        body,
+        token,
+        account_key,
+    })
+}
+
+async fn fetch_prepared_claude(
+    prepared: &PreparedClaude,
+    client: &Client,
+) -> Result<UsageSnapshot, LiveError> {
+    log_claude_outbound("usage", &prepared.profile, &prepared.account_key);
     let response = client
         .get("https://api.anthropic.com/api/oauth/usage")
-        .bearer_auth(token)
+        .bearer_auth(&prepared.token)
         .header("Accept", "application/json")
         .header("Content-Type", "application/json")
         .header("anthropic-beta", "oauth-2025-04-20")
@@ -257,6 +476,7 @@ async fn claude(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveErr
         .send()
         .await
         .map_err(|_| LiveError::Request)?;
+    log_claude_response("usage", &prepared.profile, &response);
     if let Some(error) = response_error(&response) {
         return Err(error);
     }
@@ -277,14 +497,20 @@ async fn claude(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveErr
     }
     Ok(snapshot(
         ProviderId::Claude,
-        profile,
-        body.get("claudeAiOauth")
-            .unwrap_or(&oauth)
-            .get("subscriptionType")
+        &prepared.profile,
+        prepared
+            .body
+            .get("claudeAiOauth")
+            .and_then(|oauth| oauth.get("subscriptionType"))
             .and_then(Value::as_str)
             .map(str::to_owned),
         windows,
     ))
+}
+
+async fn claude(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveError> {
+    let prepared = prepare_claude(profile, client).await?;
+    fetch_prepared_claude(&prepared, client).await
 }
 
 async fn codex(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveError> {
@@ -709,7 +935,8 @@ pub fn parse_cursor_usage_response(
 #[derive(Default)]
 pub struct FetchLiveResult {
     snapshots: Vec<UsageSnapshot>,
-    stale_keys: HashSet<String>,
+    stale_retry_at: HashMap<String, DateTime<Utc>>,
+    preserve_keys: HashSet<String>,
 }
 
 fn snapshot_key(snapshot: &UsageSnapshot) -> String {
@@ -731,8 +958,8 @@ fn record_provider_result(
             refresh.snapshots.push(snapshot);
         }
         Err(ProviderError::RateLimited(delay)) => {
-            record_rate_limit(key, delay);
-            refresh.stale_keys.insert(key.to_owned());
+            let retry_at = record_rate_limit(key, delay);
+            refresh.stale_retry_at.insert(key.to_owned(), retry_at);
         }
         Err(_) => {
             record_failure(key);
@@ -741,7 +968,16 @@ fn record_provider_result(
 }
 
 fn mark_backed_off(key: &str, refresh: &mut FetchLiveResult) {
-    refresh.stale_keys.insert(key.to_owned());
+    if let Some(retry_at) = rate_limit_retry_at(key) {
+        refresh.stale_retry_at.insert(key.to_owned(), retry_at);
+    }
+}
+
+fn rate_limit_message(retry_at: DateTime<Utc>) -> String {
+    format!(
+        "rate limited, retrying at {}",
+        retry_at.with_timezone(&Local).format("%H:%M")
+    )
 }
 
 pub fn merge_live_snapshots(
@@ -756,14 +992,18 @@ pub fn merge_live_snapshots(
     let mut merged = refresh.snapshots;
     merged.extend(previous.iter().filter_map(|snapshot| {
         let key = snapshot_key(snapshot);
-        if !fresh_keys.contains(&key) && refresh.stale_keys.contains(&key) {
-            let mut stale = snapshot.clone();
-            stale.status = SnapshotStatus::Stale;
-            stale.error_message = None;
-            Some(stale)
-        } else {
-            None
+        if !fresh_keys.contains(&key) {
+            if let Some(retry_at) = refresh.stale_retry_at.get(&key) {
+                let mut stale = snapshot.clone();
+                stale.status = SnapshotStatus::Stale;
+                stale.error_message = Some(rate_limit_message(*retry_at));
+                return Some(stale);
+            }
+            if refresh.preserve_keys.contains(&key) {
+                return Some(snapshot.clone());
+            }
         }
+        None
     }));
     merged
 }
@@ -774,20 +1014,80 @@ pub async fn fetch_live() -> FetchLiveResult {
         Err(_) => return FetchLiveResult::default(),
     };
     let mut refresh = FetchLiveResult::default();
-    let claude_provider = ClaudeProvider {
-        client: client.clone(),
-    };
-    for profile in profiles::list(&ProviderId::Claude) {
-        let key = format!("claude:{profile}");
-        let available = if profile == "Personal" {
-            matches!(claude_provider.detect().await, Detection::Detected)
-        } else {
-            profiles::credential(&ProviderId::Claude, &profile).is_some()
-        };
-        if available && can_try(&key) {
-            record_provider_result(&key, claude_provider.fetch(&profile).await, &mut refresh);
-        } else if available && is_rate_limited(&key) {
-            mark_backed_off(&key, &mut refresh);
+    {
+        let _claude_guard = CLAUDE_FETCH_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let mut prepared_profiles = Vec::new();
+        for profile in profiles::list(&ProviderId::Claude) {
+            let profile_key = format!("claude:{profile}");
+            if profiles::credential(&ProviderId::Claude, &profile).is_none() {
+                continue;
+            }
+            if !can_try(&profile_key) {
+                if is_rate_limited(&profile_key) {
+                    mark_backed_off(&profile_key, &mut refresh);
+                } else {
+                    refresh.preserve_keys.insert(profile_key);
+                }
+                continue;
+            }
+            #[cfg(debug_assertions)]
+            if std::env::var_os("BURNRATE_FORCE_CLAUDE_429").is_some() {
+                let retry_at = record_rate_limit(&profile_key, None);
+                refresh.stale_retry_at.insert(profile_key, retry_at);
+                continue;
+            }
+            match prepare_claude(&profile, &client).await {
+                Ok(prepared) => prepared_profiles.push(prepared),
+                Err(LiveError::RateLimited(delay)) => {
+                    let retry_at = record_rate_limit(&profile_key, delay);
+                    refresh
+                        .stale_retry_at
+                        .insert(profile_key.to_owned(), retry_at);
+                }
+                Err(_) => record_failure(&profile_key),
+            }
+        }
+        for (account_key, group) in group_prepared_claude(prepared_profiles) {
+            let backoff_key = format!("claude-account:{account_key}");
+            let profile_keys = group
+                .iter()
+                .map(|prepared| format!("claude:{}", prepared.profile))
+                .collect::<Vec<_>>();
+            if !can_try(&backoff_key) {
+                if let Some(retry_at) = rate_limit_retry_at(&backoff_key) {
+                    for profile_key in profile_keys {
+                        refresh.stale_retry_at.insert(profile_key, retry_at);
+                    }
+                } else {
+                    refresh.preserve_keys.extend(profile_keys);
+                }
+                continue;
+            }
+            if claude_attempt_recent(&account_key) {
+                refresh.preserve_keys.extend(profile_keys);
+                continue;
+            }
+            mark_claude_attempt(&account_key);
+            match fetch_prepared_claude(&group[0], &client).await {
+                Ok(snapshot) => {
+                    record_success(&backoff_key);
+                    for prepared in group {
+                        let mut profile_snapshot = snapshot.clone();
+                        profile_snapshot.profile_name = prepared.profile;
+                        refresh.snapshots.push(profile_snapshot);
+                    }
+                }
+                Err(LiveError::RateLimited(delay)) => {
+                    let retry_at = record_rate_limit(&backoff_key, delay);
+                    for profile_key in profile_keys {
+                        refresh.stale_retry_at.insert(profile_key, retry_at);
+                    }
+                }
+                Err(_) => record_failure(&backoff_key),
+            }
         }
     }
     let codex_provider = CodexProvider {
@@ -1065,7 +1365,7 @@ mod tests {
     async fn retry_after_header_controls_provider_backoff() {
         assert_eq!(
             forced_rate_limit(Some("47")).await,
-            LiveError::RateLimited(Duration::from_secs(47))
+            LiveError::RateLimited(Some(Duration::from_secs(47)))
         );
     }
 
@@ -1074,7 +1374,7 @@ mod tests {
         let error = forced_rate_limit(None).await;
         assert_eq!(
             error,
-            LiveError::RateLimited(DEFAULT_RATE_LIMIT_BACKOFF),
+            LiveError::RateLimited(None),
             "429 without Retry-After backs off for at least five minutes"
         );
 
@@ -1118,7 +1418,10 @@ mod tests {
         assert!(matches!(claude.status, SnapshotStatus::Stale));
         assert_eq!(claude.windows.len(), 1);
         assert!((claude.windows[0].used_pct - 42.0).abs() < f64::EPSILON);
-        assert!(claude.error_message.is_none());
+        assert!(claude
+            .error_message
+            .as_deref()
+            .is_some_and(|message| message.starts_with("rate limited, retrying at ")));
         assert_eq!(
             serde_json::to_value(claude)
                 .expect("serialize stale card")
@@ -1129,5 +1432,23 @@ mod tests {
         );
         assert!(matches!(codex.status, SnapshotStatus::Fresh));
         assert!((codex.windows[0].used_pct - 19.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn claude_profiles_with_the_same_resolved_account_form_one_poll_group() {
+        let prepared = |profile: &str, account: &str| PreparedClaude {
+            profile: profile.to_owned(),
+            body: json!({}),
+            token: format!("token-{profile}"),
+            account_key: account.to_owned(),
+        };
+        let groups = group_prepared_claude(vec![
+            prepared("Personal", "organization:one"),
+            prepared("Work", "organization:one"),
+            prepared("Other", "organization:two"),
+        ]);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups["organization:one"].len(), 2);
+        assert_eq!(groups["organization:two"].len(), 1);
     }
 }

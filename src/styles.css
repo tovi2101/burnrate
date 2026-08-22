@@ -72,6 +72,7 @@ button:active { transform: scale(.97); }
 .usage-meta span:first-child { display: flex; align-items: center; gap: 5px; }
 .usage-meta svg { width: 11px; height: 11px; }
 .pace { gap: 5px; margin-top: 12px; color: #fff; font-size: 11px; line-height: 1.2; opacity: .45; }
+.rate-limit-line { display: flex; align-items: center; gap: 5px; margin-top: 11px; color: rgba(245, 158, 11, .78); font-size: 11px; line-height: 1.2; }
 .pace strong { color: inherit; font-weight: 500; }
 .pace-dot { width: 4px; height: 4px; flex: 0 0 auto; border-radius: 50%; background: var(--accent); }
 .pace-muted { opacity: .7; }
