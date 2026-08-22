@@ -6,6 +6,11 @@ dist/
 .env
 .env.*
 *.log
+*.debug.log
+*.local
+*.local.*
+debug/
+.burnrate/
 .DS_Store
 Thumbs.db
 .tauri/

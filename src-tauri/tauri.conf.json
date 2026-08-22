@@ -11,5 +11,5 @@
     ],
     "security": { "csp": "default-src 'self'; connect-src 'self' https://api.anthropic.com https://platform.claude.com https://chatgpt.com https://auth.openai.com https://cli-chat-proxy.grok.com https://cursor.com https://opencode.ai" }
   },
-  "bundle": { "active": true, "targets": "all", "icon": [] }
+  "bundle": { "active": true, "targets": "all", "icon": ["icons/icon.ico"] }
 }

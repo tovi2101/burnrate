@@ -6,12 +6,20 @@ Tailwind frontend. There is no account server, telemetry, analytics, or Electron
 
 ## Install and run
 
-Install Node.js, Rust, and the Tauri v2 prerequisites for your platform, then:
+### Windows
+
+Download the latest Windows installer from Releases and launch Burnrate from the Start menu.
+For development, install Node.js, Rust, and the [Tauri v2 Windows prerequisites](https://v2.tauri.app/start/prerequisites/), then:
 
 ```bash
 npm install
 npm run tauri dev
 ```
+
+### macOS
+
+Download the signed `.dmg` from Releases, drag Burnrate to Applications, and open it. For a local
+build, install Node.js, Rust, Xcode command-line tools, and the [Tauri v2 macOS prerequisites](https://v2.tauri.app/start/prerequisites/), then run the same commands above.
 
 For a frontend-only preview (the UI uses the checked-in real fixtures when Tauri is unavailable):
 
@@ -58,6 +66,16 @@ explicit Settings action.
 
 The app makes no network calls except to the configured provider endpoints. It never logs access
 tokens, refresh tokens, cookies, or raw authorization headers.
+
+## Screenshots
+
+![Burnrate popover with live provider usage](screenshots/verified-popover.png)
+
+![Settings and persisted provider preferences](screenshots/verified-settings-persist.png)
+
+![Multiple provider profiles](screenshots/verified-profiles.png)
+
+![Rendered tray icon at 4x](screenshots/verified-tray-icon.png)
 
 ## Attribution
 

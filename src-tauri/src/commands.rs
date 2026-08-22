@@ -4,10 +4,13 @@ use crate::models::*;
 use crate::profiles;
 use crate::providers;
 use serde::Serialize;
+#[cfg(debug_assertions)]
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::Mutex;
-use tauri::{Manager, State};
+#[cfg(debug_assertions)]
+use tauri::Manager;
+use tauri::State;
 use tokio::sync::RwLock;
 use crate::settings;
 

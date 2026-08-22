@@ -152,14 +152,6 @@ export default function App() {
   const visibleProviders = useMemo(() => PROVIDERS.filter((provider) => settings.enabled[provider.id]), [settings.enabled]);
   useEffect(() => { document.documentElement.dataset.theme = settings.theme; }, [settings.theme]);
   useEffect(() => {
-    if (!import.meta.env.DEV) return;
-    const timer = window.setTimeout(() => {
-      void invoke("debug_tray_state").then((result) => console.info("debug_tray_state", result)).catch((error) => console.warn("debug_tray_state failed", error));
-      void invoke("debug_simulate_tray_click").then((result) => console.info("debug_simulate_tray_click", result)).catch((error) => console.warn("debug_simulate_tray_click failed", error));
-    }, 250);
-    return () => window.clearTimeout(timer);
-  }, []);
-  useEffect(() => {
     let cancelled = false;
     const timer = window.setTimeout(() => {
       void invoke<AppSettings>("get_settings").then((loaded) => {
@@ -212,7 +204,7 @@ export default function App() {
   const saveManual = (provider: ProviderId, value: string) => {
     void invoke("save_manual_credential", { provider, value }).catch(() => undefined);
   };
-  return <main className="app-shell"><header className="app-header"><div className="brand"><span className="brand-glyph"><Sparkles size={14} /></span><span>Burnrate</span></div><div className="header-actions"><div className="tray-status"><span className="status-dot" />{snapshots.length ? "All systems normal" : "Waiting for logins"}</div><button className="icon-button" onClick={() => void refresh()} aria-label="Refresh" data-refreshing={refreshing}><RefreshCw size={16} /></button>{import.meta.env.DEV && <button className="icon-button" onClick={() => { void invoke("debug_tray_state").then((state) => window.alert(JSON.stringify(state))); void invoke("debug_simulate_tray_click").then((state) => window.alert(JSON.stringify(state))); }} aria-label="Debug tray">D</button>}<button className="icon-button" onClick={() => setView(view === "settings" ? "overview" : "settings")} aria-label="Settings">{view === "settings" ? <X size={17} /> : <Settings2 size={17} />}</button></div></header>
+  return <main className="app-shell"><header className="app-header"><div className="brand"><span className="brand-glyph"><Sparkles size={14} /></span><span>Burnrate</span></div><div className="header-actions"><div className="tray-status"><span className="status-dot" />{snapshots.length ? "All systems normal" : "Waiting for logins"}</div><button className="icon-button" onClick={() => void refresh()} aria-label="Refresh" data-refreshing={refreshing}><RefreshCw size={16} /></button><button className="icon-button" onClick={() => setView(view === "settings" ? "overview" : "settings")} aria-label="Settings">{view === "settings" ? <X size={17} /> : <Settings2 size={17} />}</button></div></header>
     {view === "overview" ? <><div className="hero"><div><span className="eyebrow">TODAY · {new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" }).format(new Date())}</span><h1>Usage at a glance<span className="cursor-blink">_</span></h1><p>Five providers. One calm little window.</p></div><div className="hero-meter"><div className="meter-ring"><span>{Math.round(snapshots.length ? snapshots.reduce((sum, snapshot) => sum + Math.max(...snapshot.windows.map((window) => window.used_pct), 0), 0) / snapshots.length : 0)}%</span></div><span>avg. used</span></div></div><div className="provider-rail">{visibleProviders.map((provider) => <div className="rail-item" key={provider.id}><span className="rail-label"><span className="rail-dot" style={{ background: provider.accent }} />{provider.name}</span><MiniBars snapshot={snapshotFor(provider.id)} /></div>)}</div><div className="cards">{visibleProviders.map((provider) => <ProviderCard key={provider.id} providerId={provider.id} snapshot={snapshotFor(provider.id)} profile={activeProfiles[provider.id]} profiles={profiles[provider.id] || ["Personal"]} onProfileChange={(profile) => setActiveProfiles((current) => ({ ...current, [provider.id]: profile }))} />)}</div><footer className="app-footer"><span><span className="footer-pulse" /> Last checked {formatTime(new Date().toISOString())}</span><button onClick={() => setView("settings")}><SlidersHorizontal size={13} /> customize</button></footer></> : <Settings settings={settings} onSettingsChange={changeSettings} profiles={profiles} onDelete={deleteProfile} onSave={saveProfile} onSaveManual={saveManual} />}
     </main>;
 }
