@@ -247,6 +247,29 @@ pub fn list_profiles(provider: ProviderId) -> Vec<String> {
 }
 
 #[tauri::command]
+pub fn get_account_setup(provider: ProviderId) -> profiles::AccountSetup {
+    profiles::account_setup(&provider)
+}
+
+#[tauri::command]
+pub fn begin_add_account(
+    provider: ProviderId,
+    name: String,
+) -> Result<profiles::AccountSetup, String> {
+    profiles::begin_add_account(&provider, name.trim())
+}
+
+#[tauri::command]
+pub fn detect_new_account(provider: ProviderId) -> Result<profiles::AddAccountResult, String> {
+    profiles::detect_new_account(&provider)
+}
+
+#[tauri::command]
+pub fn cancel_add_account(provider: ProviderId) -> Result<(), String> {
+    profiles::cancel_add_account(&provider)
+}
+
+#[tauri::command]
 pub fn save_manual_credential(provider: ProviderId, value: String) -> Result<(), String> {
     profiles::save_manual(&provider, &value)
 }

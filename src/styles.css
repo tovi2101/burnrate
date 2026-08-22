@@ -20,7 +20,7 @@ h1, h2, h3, p { margin: 0; }
 button { border: 0; color: inherit; background: none; font: inherit; cursor: pointer; transition: color 150ms ease, opacity 150ms ease, background-color 150ms ease, border-color 150ms ease, transform 150ms ease; }
 button:active { transform: scale(.97); }
 
-.app-shell { display: flex; flex-direction: column; width: 100%; height: 100%; padding: 16px; overflow: hidden; background: #0a0a0b; }
+.app-shell { position: relative; display: flex; flex-direction: column; width: 100%; height: 100%; padding: 16px; overflow: hidden; background: #0a0a0b; }
 .app-header, .header-actions, .provider-heading, .title-line, .card-top, .usage-label, .usage-meta, .pace, .overview-meta, .settings-heading, .section-title, .setting-row, .setting-copy, .saved-profile, .privacy-note { display: flex; align-items: center; }
 .app-header { flex: 0 0 28px; justify-content: space-between; margin-bottom: 14px; }
 .brand { color: #f4f4f5; font-size: 13px; font-weight: 500; letter-spacing: -.01em; }
@@ -49,6 +49,8 @@ button:active { transform: scale(.97); }
 .stale-pill { color: #f59e0b; background: rgba(245, 158, 11, .1); }
 
 .profile-picker { position: relative; flex: 0 0 auto; }
+.add-account-button { display: grid; width: 24px; height: 24px; flex: 0 0 auto; place-items: center; border: 1px solid #29292f; border-radius: 999px; color: rgba(255, 255, 255, .48); background: rgba(255, 255, 255, .035); }
+.add-account-button:hover { color: #fff; border-color: #3a3a42; background: rgba(255, 255, 255, .07); }
 .profile-button { display: flex; height: 24px; align-items: center; gap: 4px; padding: 0 8px; border: 1px solid #29292f; border-radius: 999px; color: rgba(255, 255, 255, .62); background: rgba(255, 255, 255, .035); font-size: 9px; }
 .profile-button:hover { color: #fff; border-color: #3a3a42; background: rgba(255, 255, 255, .06); }
 .profile-menu { position: absolute; z-index: 20; top: 29px; right: 0; min-width: 148px; padding: 5px; border: 1px solid #2c2c32; border-radius: 9px; background: #18181c; box-shadow: 0 18px 35px rgba(0, 0, 0, .48); }
@@ -73,6 +75,10 @@ button:active { transform: scale(.97); }
 .usage-meta svg { width: 11px; height: 11px; }
 .pace { gap: 5px; margin-top: 7px; color: #fff; font-size: 11px; line-height: 1.2; opacity: .45; }
 .rate-limit-line { display: flex; align-items: center; gap: 5px; margin-top: 11px; color: rgba(245, 158, 11, .78); font-size: 11px; line-height: 1.2; }
+.all-profiles { display: flex; flex-direction: column; gap: 16px; margin-top: 15px; }
+.all-profile + .all-profile { padding-top: 15px; border-top: 1px solid #242429; }
+.all-profile .usage-list { margin-top: 9px; }
+.all-profile-name { color: rgba(255, 255, 255, .68); font-size: 10px; font-weight: 500; letter-spacing: .01em; }
 .pace strong { color: inherit; font-weight: 500; }
 .pace-dot { width: 4px; height: 4px; flex: 0 0 auto; border-radius: 50%; background: var(--accent); }
 
@@ -137,6 +143,36 @@ button:active { transform: scale(.97); }
 .privacy-note { align-items: flex-start; gap: 8px; margin: 12px 0 4px; padding: 10px; border: 1px solid rgba(16, 163, 127, .15); border-radius: 9px; color: rgba(255, 255, 255, .48); background: rgba(16, 163, 127, .045); font-size: 9px; line-height: 1.45; }
 .privacy-note svg { flex: 0 0 auto; margin-top: 1px; color: #10a37f; }
 .privacy-note strong { color: rgba(255, 255, 255, .72); font-weight: 500; }
+
+.dialog-layer { position: absolute; z-index: 50; display: grid; inset: 0; padding: 16px; place-items: center; background: rgba(5, 5, 6, .82); backdrop-filter: blur(8px); }
+.account-dialog { width: 100%; padding: 16px; border: 1px solid #29292f; border-radius: 14px; background: #131316; box-shadow: 0 28px 60px rgba(0, 0, 0, .58); }
+.dialog-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 19px; }
+.dialog-heading .icon-button { margin-left: auto; }
+.dialog-heading h2 { margin-top: 3px; color: #f4f4f5; font-size: 15px; font-weight: 550; }
+.dialog-step { display: flex; flex-direction: column; align-items: stretch; gap: 13px; }
+.dialog-step > p { color: rgba(255, 255, 255, .66); font-size: 11px; line-height: 1.55; }
+.dialog-step > p code { color: #fff; font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; }
+.step-label { color: rgba(255, 255, 255, .34); font-size: 8px; font-weight: 700; letter-spacing: .12em; }
+.dialog-field { display: flex; flex-direction: column; gap: 6px; color: rgba(255, 255, 255, .44); font-size: 9px; }
+.dialog-field input { width: 100%; padding: 9px 10px; border: 1px solid #303037; border-radius: 8px; outline: none; color: #f4f4f5; background: #0e0e10; font-size: 11px; }
+.dialog-field input:focus { border-color: #6e56cf; }
+.detected-identity { overflow: hidden; color: rgba(255, 255, 255, .34); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.dialog-primary { display: flex; width: 100%; height: 34px; align-items: center; justify-content: center; border-radius: 8px; color: #fff; background: #6e56cf; font-size: 10px; font-weight: 550; }
+.dialog-primary:hover { background: #7c66da; }
+.dialog-primary:disabled { cursor: default; opacity: .42; }
+.dialog-secondary { align-self: center; padding: 4px 8px; color: rgba(255, 255, 255, .4); font-size: 9px; }
+.dialog-secondary:hover { color: #fff; }
+.command-copy { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 10px; border: 1px solid #29292f; border-radius: 8px; background: #0e0e10; }
+.command-copy code { color: rgba(255, 255, 255, .78); font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; }
+.command-copy button { display: flex; align-items: center; gap: 4px; color: rgba(255, 255, 255, .5); font-size: 8px; }
+.command-copy button:hover { color: #fff; }
+.dialog-step .dialog-safety { padding: 9px; border-radius: 8px; color: rgba(255, 255, 255, .42); background: rgba(16, 163, 127, .06); font-size: 9px; }
+.dialog-loading { display: flex; align-items: center; gap: 8px; padding: 18px 0; color: rgba(255, 255, 255, .5); font-size: 10px; }
+.dialog-loading svg { animation: spin .8s linear infinite; }
+.dialog-error { margin-top: 12px; padding: 8px 9px; border: 1px solid rgba(239, 68, 68, .16); border-radius: 7px; color: #fca5a5; background: rgba(239, 68, 68, .07); font-size: 9px; line-height: 1.4; }
+.dialog-success { align-items: center; text-align: center; }
+.dialog-success h3 { color: #f4f4f5; font-size: 13px; font-weight: 550; }
+.success-mark { display: grid; width: 36px; height: 36px; place-items: center; border-radius: 50%; color: #34d399; background: rgba(16, 163, 127, .13); }
 
 html[data-theme="light"] body, html[data-theme="light"] .app-shell { color: #18181b; background: #f6f6f7; }
 html[data-theme="light"] .provider-card, html[data-theme="light"] .saved-profile, html[data-theme="light"] input { border-color: #dedee2; background: #fff; }

@@ -308,6 +308,9 @@ fn mark_account_attempt(account_key: &str) {
 
 fn group_profiles_by_source(provider: &ProviderId) -> HashMap<String, Vec<String>> {
     let mut groups: HashMap<String, Vec<String>> = HashMap::new();
+    if profiles::is_add_pending(provider) {
+        return groups;
+    }
     for profile in profiles::list(provider) {
         if let Some(source) = profiles::source_key(provider, &profile) {
             groups.entry(source).or_default().push(profile);
@@ -985,6 +988,15 @@ pub async fn fetch_live(minimum_interval: Duration) -> FetchLiveResult {
         Err(_) => return FetchLiveResult::default(),
     };
     let mut refresh = FetchLiveResult::default();
+    for provider in [ProviderId::Claude, ProviderId::Codex, ProviderId::Grok] {
+        if profiles::is_add_pending(&provider) {
+            refresh.preserve_keys.extend(
+                profiles::list(&provider)
+                    .into_iter()
+                    .map(|profile| format!("{}:{profile}", provider_key(&provider))),
+            );
+        }
+    }
     {
         let _claude_guard = CLAUDE_FETCH_LOCK
             .get_or_init(|| tokio::sync::Mutex::new(()))

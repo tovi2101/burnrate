@@ -25,6 +25,10 @@ macro_rules! invoke_handler {
             commands::save_profile,
             commands::delete_profile,
             commands::list_profiles,
+            commands::get_account_setup,
+            commands::begin_add_account,
+            commands::detect_new_account,
+            commands::cancel_add_account,
             commands::save_manual_credential,
             commands::debug_tray_state,
             commands::debug_simulate_tray_click
@@ -43,6 +47,10 @@ macro_rules! invoke_handler {
             commands::save_profile,
             commands::delete_profile,
             commands::list_profiles,
+            commands::get_account_setup,
+            commands::begin_add_account,
+            commands::detect_new_account,
+            commands::cancel_add_account,
             commands::save_manual_credential
         ]
     };

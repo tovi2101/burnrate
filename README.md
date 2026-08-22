@@ -83,12 +83,17 @@ present. The exact commands are `cursor-agent login` and `opencode auth login`.
 
 ## Multiple accounts
 
-Use Settings → Profiles → “save credential source label”. Burnrate stores a reference to the CLI
-credential source and its account identity, never a frozen OAuth token. Labels that resolve to the
-same source share one poll; switching from a card is instant, and “All” stacks the configured labels.
-Claude, Codex, and Grok expose one active account per CLI config directory, so multiple labels on
-one directory follow that same active login. Simultaneous accounts require separate CLI config
-directories. Deleting a profile removes only Burnrate's source reference and index entry.
+Open a provider's profile pill (or its **+** button) and choose **Add account**. Burnrate first
+preserves the current login in an isolated provider CLI config directory, then guides you through
+the provider's normal login command and detects the new identity. There is no profile cap. Duplicate
+identities are rejected, switching is instant, and **All** stacks every profile vertically.
+
+Profiles contain only a credential-source reference and account identity in the OS keyring—never a
+frozen OAuth token. Claude, Codex, and Grok can safely sustain separate CLI-owned config directories;
+each distinct account polls independently while duplicate references coalesce into one request.
+Cursor and OpenCode do not currently expose an isolated credential source that Burnrate can delegate
+refresh to safely, so their add-account dialog explains that multiple simultaneous logins are not
+available instead of risking the active CLI session.
 
 ## Safety
 
