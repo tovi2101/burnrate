@@ -81,12 +81,29 @@ fn tray_icon() -> tauri::image::Image<'static> {
     tauri::image::Image::new_owned(rgba, 32, 32)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
 fn platform_tray_icon() -> (tauri::image::Image<'static>, String) {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("icons")
         .join("icon.ico");
     match tauri::image::Image::from_bytes(include_bytes!("../icons/icon.ico")) {
+        Ok(icon) => (icon.to_owned(), path.display().to_string()),
+        Err(error) => {
+            eprintln!(
+                "tray: icon decode failed path={} error={error}",
+                path.display()
+            );
+            (tray_icon(), "generated fallback".into())
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn platform_tray_icon() -> (tauri::image::Image<'static>, String) {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("icons")
+        .join("32x32.png");
+    match tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png")) {
         Ok(icon) => (icon.to_owned(), path.display().to_string()),
         Err(error) => {
             eprintln!(
@@ -328,6 +345,7 @@ pub fn run() {
                     eprintln!(
                         "tray: registered=false icon={icon_path} size={icon_width}x{icon_height} error={error}"
                     );
+                    show_main_window(&app.app_handle());
                 }
             }
             #[cfg(debug_assertions)]
