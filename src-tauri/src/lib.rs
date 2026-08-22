@@ -1,9 +1,9 @@
 mod backoff;
 mod cache;
 mod commands;
-mod live;
-mod models;
-mod profiles;
+pub mod live;
+pub mod models;
+pub mod profiles;
 mod providers;
 mod settings;
 

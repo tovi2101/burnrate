@@ -113,6 +113,13 @@ pub fn save_manual(provider: &ProviderId, value: &str) -> Result<(), String> {
         .map_err(|_| "OS keyring write failed".to_string())
 }
 
+pub fn delete_manual(provider: &ProviderId) -> Result<(), String> {
+    Entry::new(SERVICE, &manual_account(provider))
+        .map_err(|_| "OS keyring unavailable".to_string())?
+        .delete_credential()
+        .map_err(|_| "OS keyring delete failed".to_string())
+}
+
 pub fn credential(provider: &ProviderId, name: &str) -> Option<String> {
     if name == "Personal" {
         return current_credential(provider);

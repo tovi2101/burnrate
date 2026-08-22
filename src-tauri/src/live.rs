@@ -16,7 +16,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq, Eq)]
 pub enum LiveError {
     #[error("credentials unavailable")]
     Missing,
@@ -470,11 +470,28 @@ async fn opencode(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveE
                 .map(str::to_owned),
         )
     };
+    fetch_opencode_with_credentials(
+        profile,
+        client,
+        api_key,
+        manual_cookie,
+        "https://opencode.ai/zen/go/v1/usage",
+    )
+    .await
+}
+
+pub async fn fetch_opencode_with_credentials(
+    profile: &str,
+    client: &Client,
+    api_key: Option<String>,
+    manual_cookie: Option<String>,
+    endpoint: &str,
+) -> Result<UsageSnapshot, LiveError> {
     if api_key.is_none() && manual_cookie.is_none() {
         return Err(LiveError::Missing);
     }
     let mut request = client
-        .get("https://opencode.ai/zen/go/v1/usage")
+        .get(endpoint)
         .header("Accept", "application/json")
         .header("User-Agent", "Burnrate");
     if let Some(key) = api_key {
@@ -491,6 +508,13 @@ async fn opencode(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveE
         .json::<Value>()
         .await
         .map_err(|_| LiveError::Parse)?;
+    parse_opencode_usage_response(profile, &data)
+}
+
+pub fn parse_opencode_usage_response(
+    profile: &str,
+    data: &Value,
+) -> Result<UsageSnapshot, LiveError> {
     let rolling = data.get("rollingUsage").ok_or(LiveError::Parse)?;
     let mut windows = vec![window(
         "5h",
@@ -562,8 +586,23 @@ async fn cursor(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveErr
             .map(str::to_owned)
             .ok_or(LiveError::Missing)?
     };
+    fetch_cursor_with_cookie(
+        profile,
+        client,
+        cookie,
+        "https://cursor.com/api/usage-summary",
+    )
+    .await
+}
+
+pub async fn fetch_cursor_with_cookie(
+    profile: &str,
+    client: &Client,
+    cookie: String,
+    endpoint: &str,
+) -> Result<UsageSnapshot, LiveError> {
     let response = client
-        .get("https://cursor.com/api/usage-summary")
+        .get(endpoint)
         .header("Accept", "application/json")
         .header("Cookie", cookie)
         .send()
@@ -576,6 +615,13 @@ async fn cursor(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveErr
         .json::<Value>()
         .await
         .map_err(|_| LiveError::Parse)?;
+    parse_cursor_usage_response(profile, &data)
+}
+
+pub fn parse_cursor_usage_response(
+    profile: &str,
+    data: &Value,
+) -> Result<UsageSnapshot, LiveError> {
     let plan = data
         .pointer("/individualUsage/plan")
         .ok_or(LiveError::Parse)?;
