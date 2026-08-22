@@ -4,24 +4,56 @@ Burnrate is a small, open-source system-tray popover for seeing Claude, Codex, G
 OpenCode usage limits together. It is a Tauri v2 app with a Rust backend and React + TypeScript +
 Tailwind frontend. There is no account server, telemetry, analytics, or Electron layer.
 
-## Install and run
+## Install
+
+Burnrate is directly logged in and synced from your existing provider CLI sessions on first
+launch—there is zero setup.
 
 ### Windows
 
-Download the latest Windows installer from Releases and launch Burnrate from the Start menu.
-The installer is currently unsigned, so Windows SmartScreen may appear; click **More info**, then
-**Run anyway** to continue.
-For development, install Node.js, Rust, and the [Tauri v2 Windows prerequisites](https://v2.tauri.app/start/prerequisites/), then:
+Install the current release with [Scoop](https://scoop.sh/):
+
+```powershell
+scoop install https://raw.githubusercontent.com/tovi2101/burnrate/master/packaging/scoop/burnrate.json
+```
+
+MSI and NSIS installers are also attached to each [GitHub Release](https://github.com/tovi2101/burnrate/releases).
+The binaries are unsigned, so Windows SmartScreen may appear; click **More info**, then **Run
+anyway**.
+
+### macOS
+
+The cask in `packaging/homebrew/burnrate.rb` is ready for the `tovi2101/homebrew-tap` tap:
+
+```bash
+brew install --cask tovi2101/tap/burnrate
+```
+
+The macOS build is universal (Apple Silicon and Intel). Because it is unsigned, Gatekeeper may
+block its first launch. Right-click Burnrate and choose **Open**, or run:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Burnrate.app
+```
+
+### Linux
+
+Install the latest AppImage into `~/.local/bin`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tovi2101/burnrate/master/packaging/install.sh | bash
+```
+
+The same release also includes a Debian package.
+
+## Develop
+
+Install Node.js, Rust, and the [Tauri v2 platform prerequisites](https://v2.tauri.app/start/prerequisites/), then:
 
 ```bash
 npm install
 npm run tauri dev
 ```
-
-### macOS
-
-Download the signed `.dmg` from Releases, drag Burnrate to Applications, and open it. For a local
-build, install Node.js, Rust, Xcode command-line tools, and the [Tauri v2 macOS prerequisites](https://v2.tauri.app/start/prerequisites/), then run the same commands above.
 
 For a frontend-only preview (the UI uses the checked-in real fixtures when Tauri is unavailable):
 
