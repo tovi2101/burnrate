@@ -5,15 +5,13 @@
   "license": "MIT",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/tovi2101/burnrate/releases/download/v1.0.0/Burnrate_1.0.0_x64-setup.exe",
-      "hash": "skip"
+      "url": "https://github.com/tovi2101/burnrate/releases/download/v1.0.0/Burnrate_1.0.0_x64-setup.exe"
     }
   },
   "installer": {
-    "args": ["/S", "/CURRENTUSER"]
+    "script": "Start-Process -Wait (Join-Path $dir 'Burnrate_1.0.0_x64-setup.exe') -ArgumentList '/S', '/CURRENTUSER'"
   },
   "uninstaller": {
-    "script": "if ($cmd -and (Test-Path $cmd)) { Start-Process -Wait $cmd -ArgumentList '/S' }"
-  },
-  "shortcuts": [["Burnrate.exe", "Burnrate"]]
+    "script": "$uninstaller = Join-Path $env:LOCALAPPDATA 'Burnrate\\uninstall.exe'; if (Test-Path $uninstaller) { Start-Process -Wait $uninstaller -ArgumentList '/S' }"
+  }
 }

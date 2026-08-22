@@ -17,6 +17,7 @@ use tauri::State;
 use tauri_plugin_notification::NotificationExt;
 use tokio::sync::RwLock;
 
+#[derive(Clone)]
 pub struct AppState {
     pub snapshots: Arc<RwLock<Vec<UsageSnapshot>>>,
     pub settings: Arc<RwLock<AppSettings>>,
@@ -43,7 +44,72 @@ fn evaluate_warnings(
     (events, warnings.persisted())
 }
 
+#[cfg(debug_assertions)]
+fn debug_force_warning(
+    state: &AppState,
+    settings: &AppSettings,
+    current: &[UsageSnapshot],
+) -> (Vec<WarningEvent>, BTreeMap<String, Vec<u8>>) {
+    use chrono::{TimeZone, Utc};
+
+    let proof_offset = std::env::var("BURNRATE_FORCE_WARNING")
+        .ok()
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or_default();
+    let reset = current
+        .iter()
+        .find(|snapshot| snapshot.provider == ProviderId::Claude)
+        .and_then(|snapshot| snapshot.windows.iter().find(|window| window.label == "5h"))
+        .and_then(|window| window.resets_at)
+        .or_else(|| {
+            Utc.with_ymd_and_hms(2099, 1, 1, 20, 9, 0)
+                .single()
+                .map(|value| value + chrono::Duration::seconds(proof_offset))
+        });
+    let make_snapshot = |used_pct| UsageSnapshot {
+        provider: ProviderId::Claude,
+        profile_name: "notification-proof".into(),
+        plan_name: Some("Claude Pro".into()),
+        windows: vec![UsageWindow {
+            label: "5h".into(),
+            used_pct,
+            resets_at: reset,
+            pace_limit_minutes: None,
+        }],
+        fetched_at: Utc::now(),
+        status: SnapshotStatus::Fresh,
+        error_message: None,
+    };
+    let result = evaluate_warnings(
+        state,
+        &[make_snapshot(49.0)],
+        &[make_snapshot(50.0)],
+        settings,
+    );
+    eprintln!("notification-proof: fired={}", result.0.len());
+    result
+}
+
+fn append_debug_warning(
+    state: &AppState,
+    settings: &AppSettings,
+    current: &[UsageSnapshot],
+    events: &mut Vec<WarningEvent>,
+    notified: &mut BTreeMap<String, Vec<u8>>,
+) {
+    #[cfg(debug_assertions)]
+    if std::env::var_os("BURNRATE_FORCE_WARNING").is_some() {
+        let (forced_events, forced_notified) = debug_force_warning(state, settings, current);
+        events.extend(forced_events);
+        *notified = forced_notified;
+    }
+    #[cfg(not(debug_assertions))]
+    let _ = (state, settings, current, events, notified);
+}
+
 fn send_warnings(app: &tauri::AppHandle, events: Vec<WarningEvent>) {
+    #[cfg(debug_assertions)]
+    let should_capture = !events.is_empty();
     for event in events {
         if let Err(error) = app
             .notification()
@@ -53,6 +119,22 @@ fn send_warnings(app: &tauri::AppHandle, events: Vec<WarningEvent>) {
             .show()
         {
             eprintln!("notification: show failed: {error}");
+        }
+    }
+    #[cfg(debug_assertions)]
+    if should_capture {
+        if let (Some(helper), Some(output)) = (
+            std::env::var_os("BURNRATE_CAPTURE_HELPER"),
+            std::env::var_os("BURNRATE_NOTIFICATION_SCREENSHOT"),
+        ) {
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(1200));
+                let status = std::process::Command::new(helper)
+                    .arg("0")
+                    .arg(output)
+                    .status();
+                eprintln!("notification-proof: screenshot={status:?}");
+            });
         }
     }
 }
@@ -86,7 +168,8 @@ pub async fn get_snapshots(
         if let Ok(mut pace) = state.pace.lock() {
             pace.apply(&mut fresh, Duration::from_secs(refresh_seconds));
         }
-        let (events, notified) = evaluate_warnings(&state, &[], &fresh, &settings);
+        let (mut events, mut notified) = evaluate_warnings(&state, &[], &fresh, &settings);
+        append_debug_warning(&state, &settings, &fresh, &mut events, &mut notified);
         cache::save(&fresh, &notified);
         *state.snapshots.write().await = fresh.clone();
         send_warnings(&app, events);
@@ -99,6 +182,13 @@ pub async fn get_snapshots(
 pub async fn refresh_snapshots(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
+) -> Result<Vec<UsageSnapshot>, String> {
+    refresh_snapshots_inner(&app, state.inner()).await
+}
+
+pub async fn refresh_snapshots_inner(
+    app: &tauri::AppHandle,
+    state: &AppState,
 ) -> Result<Vec<UsageSnapshot>, String> {
     let current = state.snapshots.read().await.clone();
     let settings = state.settings.read().await.clone();
@@ -119,11 +209,24 @@ pub async fn refresh_snapshots(
     if let Ok(mut pace) = state.pace.lock() {
         pace.apply(&mut fresh, Duration::from_secs(refresh_seconds));
     }
-    let (events, notified) = evaluate_warnings(&state, &current, &fresh, &settings);
+    let (mut events, mut notified) = evaluate_warnings(&state, &current, &fresh, &settings);
+    append_debug_warning(&state, &settings, &fresh, &mut events, &mut notified);
     cache::save(&fresh, &notified);
     *state.snapshots.write().await = fresh.clone();
-    send_warnings(&app, events);
+    send_warnings(app, events);
     Ok(fresh)
+}
+
+pub fn start_background_polling(app: tauri::AppHandle, state: AppState) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            let refresh_seconds = state.settings.read().await.refresh_seconds.max(30);
+            tokio::time::sleep(Duration::from_secs(refresh_seconds)).await;
+            if let Err(error) = refresh_snapshots_inner(&app, &state).await {
+                eprintln!("poll: background refresh failed: {error}");
+            }
+        }
+    });
 }
 
 #[tauri::command]

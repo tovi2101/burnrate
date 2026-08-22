@@ -115,13 +115,13 @@ tokens, refresh tokens, cookies, or raw authorization headers.
 
 ## Screenshots
 
-![Burnrate popover with live provider usage](screenshots/verified-popover.png)
+![Burnrate v1 with live provider usage](screenshots/v1-window.png)
+
+![Native limit warning](screenshots/v1-notification.png)
 
 ![Settings and persisted provider preferences](screenshots/verified-settings-persist.png)
 
 ![Multiple provider profiles](screenshots/verified-profiles.png)
-
-![Rendered tray icon at 4x](screenshots/verified-tray-icon.png)
 
 ## Attribution
 

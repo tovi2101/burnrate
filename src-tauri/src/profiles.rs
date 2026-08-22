@@ -122,7 +122,10 @@ fn current_source(provider: &ProviderId) -> CredentialSource {
 }
 
 fn supports_isolated_accounts(provider: &ProviderId) -> bool {
-    matches!(provider, ProviderId::Claude | ProviderId::Codex | ProviderId::Grok)
+    matches!(
+        provider,
+        ProviderId::Claude | ProviderId::Codex | ProviderId::Grok
+    )
 }
 
 fn unsupported_explanation(provider: &ProviderId) -> Option<String> {
@@ -192,8 +195,9 @@ fn isolated_source(
         .map_err(|_| "The isolated credential file could not be written".to_string())?;
     std::fs::set_permissions(&temporary, permissions)
         .map_err(|_| "The isolated credential permissions could not be preserved".to_string())?;
-    std::fs::rename(&temporary, &destination)
-        .map_err(|_| "The isolated credential file could not be committed atomically".to_string())?;
+    std::fs::rename(&temporary, &destination).map_err(|_| {
+        "The isolated credential file could not be committed atomically".to_string()
+    })?;
     Ok(CredentialSource::CliFile { path: destination })
 }
 
@@ -376,7 +380,13 @@ pub fn account_identity(provider: &ProviderId, name: &str) -> Option<String> {
     if name == "Personal" {
         Some(build_reference(provider)?.account_identity)
     } else {
-        Some(stored_reference(provider, name)?.account_identity)
+        let stored = stored_reference(provider, name)?;
+        if let Some(current) = build_reference(provider) {
+            if current.source == stored.source {
+                return Some(current.account_identity);
+            }
+        }
+        Some(stored.account_identity)
     }
 }
 
@@ -463,6 +473,7 @@ pub fn migrate_legacy_profiles() {
     ] {
         let replacement = build_reference(&provider);
         let mut claude_deleted = 0_usize;
+        let mut normalized = 0_usize;
         for name in stored_names(&provider) {
             let Ok(entry) = Entry::new(SERVICE, &profile_account(&provider, &name)) else {
                 continue;
@@ -470,7 +481,22 @@ pub fn migrate_legacy_profiles() {
             let Ok(raw) = entry.get_password() else {
                 continue;
             };
-            if serde_json::from_str::<StoredProfileReference>(&raw).is_ok() {
+            if let Ok(mut reference) = serde_json::from_str::<StoredProfileReference>(&raw) {
+                if let Some(current) = replacement.as_ref() {
+                    if reference.source == current.source
+                        && !reference
+                            .account_identity
+                            .eq_ignore_ascii_case(&current.account_identity)
+                    {
+                        reference.account_identity = current.account_identity.clone();
+                        if serde_json::to_string(&reference)
+                            .ok()
+                            .is_some_and(|encoded| entry.set_password(&encoded).is_ok())
+                        {
+                            normalized += 1;
+                        }
+                    }
+                }
                 continue;
             }
             if entry.delete_credential().is_err() {
@@ -488,6 +514,12 @@ pub fn migrate_legacy_profiles() {
         if claude_deleted > 0 {
             eprintln!(
                 "profiles: deleted {claude_deleted} stale Claude token keyring entry and relinked profile labels to the CLI credential source"
+            );
+        }
+        if normalized > 0 {
+            eprintln!(
+                "profiles: normalized {normalized} {} profile reference(s) that share the current CLI credential source",
+                provider_key(&provider)
             );
         }
     }
@@ -531,16 +563,7 @@ pub fn credential(provider: &ProviderId, name: &str) -> Option<String> {
 
 pub fn list(provider: &ProviderId) -> Vec<String> {
     let mut names = stored_names(provider);
-    let current_identity = build_reference(provider).map(|reference| reference.account_identity);
-    let current_is_named = current_identity.as_deref().is_some_and(|identity| {
-        names.iter().any(|name| {
-            stored_reference(provider, name)
-                .is_some_and(|reference| reference.account_identity.eq_ignore_ascii_case(identity))
-        })
-    });
-    if !current_is_named {
-        names.insert(0, "Personal".to_string());
-    }
+    names.insert(0, "Personal".to_string());
     names
 }
 
@@ -621,7 +644,9 @@ fn suggested_profile_name(identity: &str) -> String {
     }
     let safe = trimmed
         .chars()
-        .filter(|character| character.is_ascii_alphanumeric() || *character == '-' || *character == '_')
+        .filter(|character| {
+            character.is_ascii_alphanumeric() || *character == '-' || *character == '_'
+        })
         .take(16)
         .collect::<String>();
     if safe.is_empty() {
@@ -633,7 +658,10 @@ fn suggested_profile_name(identity: &str) -> String {
 
 fn unique_profile_name(provider: &ProviderId, preferred: &str) -> String {
     let names = stored_names(provider);
-    if !names.iter().any(|name| name.eq_ignore_ascii_case(preferred)) {
+    if !names
+        .iter()
+        .any(|name| name.eq_ignore_ascii_case(preferred))
+    {
         return preferred.to_owned();
     }
     for suffix in 2.. {
@@ -648,7 +676,10 @@ fn unique_profile_name(provider: &ProviderId, preferred: &str) -> String {
     unreachable!()
 }
 
-pub fn begin_add_account(provider: &ProviderId, profile_name: &str) -> Result<AccountSetup, String> {
+pub fn begin_add_account(
+    provider: &ProviderId,
+    profile_name: &str,
+) -> Result<AccountSetup, String> {
     if !supports_isolated_accounts(provider) {
         return Err(unsupported_explanation(provider)
             .unwrap_or_else(|| "Multiple accounts are unavailable for this provider".into()));
@@ -664,8 +695,8 @@ pub fn begin_add_account(provider: &ProviderId, profile_name: &str) -> Result<Ac
     if pending_reference(provider).is_some() {
         return Ok(account_setup(provider));
     }
-    let current = build_reference(provider)
-        .ok_or_else(|| "No current CLI login was found".to_string())?;
+    let current =
+        build_reference(provider).ok_or_else(|| "No current CLI login was found".to_string())?;
     let existing_name = stored_names(provider).into_iter().find(|name| {
         stored_reference(provider, name).is_some_and(|stored| {
             stored
@@ -704,17 +735,15 @@ pub fn begin_add_account(provider: &ProviderId, profile_name: &str) -> Result<Ac
 }
 
 pub fn cancel_add_account(provider: &ProviderId) -> Result<(), String> {
-    let pending = pending_reference(provider)
-        .ok_or_else(|| "No add-account flow is pending".to_string())?;
+    let pending =
+        pending_reference(provider).ok_or_else(|| "No add-account flow is pending".to_string())?;
     let current = build_reference(provider)
         .ok_or_else(|| "The current CLI login could not be read".to_string())?;
     if !current
         .account_identity
         .eq_ignore_ascii_case(&pending.original_identity)
     {
-        return Err(
-            "Detect the new login first so the previous account is not lost".into(),
-        );
+        return Err("Detect the new login first so the previous account is not lost".into());
     }
     remove_isolated_source(&pending.isolated_source);
     clear_pending_reference(provider);
@@ -755,8 +784,21 @@ pub fn detect_new_account(provider: &ProviderId) -> Result<AddAccountResult, Str
         source: pending.isolated_source.clone(),
         account_identity: pending.original_identity.clone(),
     };
-    for name in original_names {
+    let replaced_sources = original_names
+        .iter()
+        .filter_map(|name| stored_reference(provider, name).map(|stored| stored.source))
+        .collect::<Vec<_>>();
+    for name in &original_names {
         save_reference(provider, &name, &original)?;
+    }
+    let remaining_names = stored_names(provider);
+    for source in replaced_sources {
+        let still_used = remaining_names.iter().any(|name| {
+            stored_reference(provider, name).is_some_and(|stored| stored.source == source)
+        });
+        if source != pending.isolated_source && !still_used {
+            remove_isolated_source(&source);
+        }
     }
 
     let existing_new = stored_names(provider).into_iter().find(|name| {
@@ -797,7 +839,10 @@ mod tests {
 
     #[test]
     fn email_identity_is_used_as_the_profile_name() {
-        assert_eq!(suggested_profile_name("user@example.com"), "user@example.com");
+        assert_eq!(
+            suggested_profile_name("user@example.com"),
+            "user@example.com"
+        );
     }
 
     #[test]

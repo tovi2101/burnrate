@@ -220,6 +220,9 @@ fn show_main_window(app: &tauri::AppHandle) -> bool {
         return false;
     };
     let _ = window.unminimize();
+    if let Err(error) = window.center() {
+        eprintln!("window: center failed: {error}");
+    }
     let shown = window.show().is_ok();
     let _ = window.set_focus();
     shown
@@ -302,6 +305,10 @@ pub fn run() {
                     .visible(false)
                     .build()?;
             }
+            commands::start_background_polling(
+                app.app_handle().clone(),
+                app.state::<AppState>().inner().clone(),
+            );
             if !start_hidden_in_tray {
                 show_main_window(&app.app_handle());
             }
@@ -357,7 +364,9 @@ pub fn run() {
                 }
             }
             #[cfg(debug_assertions)]
-            write_tray_icon_preview(&preview_icon).map_err(std::io::Error::other)?;
+            if std::env::var_os("BURNRATE_WRITE_TRAY_PREVIEW").is_some() {
+                write_tray_icon_preview(&preview_icon).map_err(std::io::Error::other)?;
+            }
             Ok(())
         })
         .run(tauri::generate_context!())

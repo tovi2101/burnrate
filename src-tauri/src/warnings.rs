@@ -71,7 +71,7 @@ fn window_instance(base: &str, reset: Option<DateTime<Utc>>) -> String {
     format!(
         "{base}{}",
         reset
-            .map(|value| value.to_rfc3339())
+            .map(|value| { format!("five-minute:{}", (value.timestamp() + 150).div_euclid(300)) })
             .unwrap_or_else(|| "no-reset".into())
     )
 }
@@ -176,6 +176,32 @@ mod tests {
             [50, 80],
         );
         assert!(events.is_empty(), "restart must not re-fire an instance");
+    }
+
+    #[test]
+    fn reset_estimate_jitter_is_the_same_window_instance() {
+        let mut tracker = WarningTracker::default();
+        assert_eq!(
+            tracker
+                .evaluate(
+                    &[snapshot(49.0, 299)],
+                    &[snapshot(51.0, 299)],
+                    true,
+                    [50, 80]
+                )
+                .len(),
+            1
+        );
+        let persisted = tracker.persisted();
+        let mut restarted = WarningTracker::from_persisted(persisted);
+        assert!(restarted
+            .evaluate(
+                &[snapshot(49.0, 301)],
+                &[snapshot(51.0, 301)],
+                true,
+                [50, 80]
+            )
+            .is_empty());
     }
 
     #[test]

@@ -551,7 +551,7 @@ async fn codex_rpc(profile: &str) -> Result<Value, LiveError> {
     }
     let mut child = command.spawn().map_err(|_| LiveError::Missing)?;
     let mut stdin = child.stdin.take().ok_or(LiveError::Request)?;
-    let initialize = json!({"id":1,"method":"initialize","params":{"clientInfo":{"name":"burnrate","version":"0.1.0"}}});
+    let initialize = json!({"id":1,"method":"initialize","params":{"clientInfo":{"name":"burnrate","version":env!("CARGO_PKG_VERSION")}}});
     let initialized = json!({"method":"initialized","params":{}});
     let rate_limits = json!({"id":2,"method":"account/rateLimits/read","params":{}});
     stdin
@@ -983,7 +983,10 @@ pub fn merge_live_snapshots(
 }
 
 pub async fn fetch_live(minimum_interval: Duration) -> FetchLiveResult {
-    let client = match Client::builder().user_agent("Burnrate/0.1").build() {
+    let client = match Client::builder()
+        .user_agent(concat!("Burnrate/", env!("CARGO_PKG_VERSION")))
+        .build()
+    {
         Ok(client) => client,
         Err(_) => return FetchLiveResult::default(),
     };
