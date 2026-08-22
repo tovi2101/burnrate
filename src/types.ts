@@ -36,3 +36,33 @@ export interface AppSettings {
   warningThresholds: [number, number];
   theme: "dark" | "light" | "system";
 }
+
+export interface HistoryPoint {
+  timestamp: number;
+  value: number;
+}
+
+export interface HistorySeries {
+  provider: ProviderId;
+  kind: string;
+  unit: "tokens" | "percent" | "context_tokens";
+  points: HistoryPoint[];
+}
+
+export interface HistorySummary {
+  provider: ProviderId;
+  totalTokens: number;
+  peakPercent?: number | null;
+  limitHits: number;
+  mostActiveDay?: string | null;
+  since?: string | null;
+}
+
+export interface HistoryPayload {
+  range: "24h" | "7d" | "30d";
+  importing: boolean;
+  importedRows: number;
+  message?: string | null;
+  series: HistorySeries[];
+  summaries: HistorySummary[];
+}

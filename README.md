@@ -81,6 +81,20 @@ response fields, and fallback order are the implementation spec in `PROVIDERS.md
 Cursor and OpenCode are intentionally shown as a clear login empty state when no CLI credentials are
 present. The exact commands are `cursor-agent login` and `opencode auth login`.
 
+## Real usage history
+
+The **Now**, **24h**, **7d**, and **30d** views combine two honest units without conflating them:
+quota snapshots are charted as percent used, while historical CLI activity is charted as processed
+tokens per hour or day. On the first launch of this version, Burnrate asynchronously imports the
+history already present in Claude Code, Codex, Grok, and OpenCode local session stores; Cursor account
+history is available when its existing manual-cookie fallback is configured. The Now view never waits
+for the import.
+
+History is stored in a local SQLite database in the platform app-data directory and pruned after 180
+days. Burnrate stores timestamps, provider/profile labels, usage values, plans, and provenance only.
+It never copies prompts, responses, tool payloads, session contents, or credentials. See
+[HISTORY.md](./HISTORY.md) for the exact per-provider source map and measured coverage.
+
 ## Multiple accounts
 
 Open a provider's profile pill (or its **+** button) and choose **Add account**. Burnrate first
@@ -115,11 +129,15 @@ tokens, refresh tokens, cookies, or raw authorization headers.
 
 ## Screenshots
 
-![Burnrate v1 with live provider usage](screenshots/v1-window.png)
+![Burnrate Now view with live provider usage](screenshots/v2-now.png)
+
+![Burnrate 30-day real usage history](screenshots/v2-history-30d.png)
+
+![Burnrate settings in the t3code design language](screenshots/v2-settings.png)
+
+![Burnrate beside t3code Usage](screenshots/v2-side-by-side.png)
 
 ![Native limit warning](screenshots/v1-notification.png)
-
-![Settings and persisted provider preferences](screenshots/verified-settings-persist.png)
 
 ![Multiple provider profiles](screenshots/verified-profiles.png)
 

@@ -1,6 +1,7 @@
 mod backoff;
 mod cache;
 mod commands;
+mod history;
 pub mod live;
 pub mod models;
 mod pace;
@@ -21,6 +22,7 @@ macro_rules! invoke_handler {
             commands::get_snapshots,
             commands::refresh_snapshots,
             commands::get_settings,
+            commands::get_history,
             commands::save_settings,
             commands::save_profile,
             commands::delete_profile,
@@ -43,6 +45,7 @@ macro_rules! invoke_handler {
             commands::get_snapshots,
             commands::refresh_snapshots,
             commands::get_settings,
+            commands::get_history,
             commands::save_settings,
             commands::save_profile,
             commands::delete_profile,
@@ -305,6 +308,15 @@ pub fn run() {
                     .visible(false)
                     .build()?;
             }
+            let history_path = app.path().app_data_dir()?.join("history.sqlite3");
+            let history_state = history::HistoryState {
+                store: Arc::new(
+                    history::HistoryStore::new(history_path).map_err(std::io::Error::other)?,
+                ),
+                status: Arc::new(RwLock::new(history::HistoryStatus::default())),
+            };
+            app.manage(history_state.clone());
+            history::start_backfill(history_state);
             commands::start_background_polling(
                 app.app_handle().clone(),
                 app.state::<AppState>().inner().clone(),

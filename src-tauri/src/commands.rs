@@ -1,4 +1,5 @@
 use crate::cache;
+use crate::history::{HistoryPayload, HistoryState};
 use crate::live;
 use crate::models::*;
 use crate::pace::PaceTracker;
@@ -171,6 +172,7 @@ pub async fn get_snapshots(
         let (mut events, mut notified) = evaluate_warnings(&state, &[], &fresh, &settings);
         append_debug_warning(&state, &settings, &fresh, &mut events, &mut notified);
         cache::save(&fresh, &notified);
+        crate::history::append_live(&app, &fresh);
         *state.snapshots.write().await = fresh.clone();
         send_warnings(&app, events);
         return Ok(fresh);
@@ -212,6 +214,7 @@ pub async fn refresh_snapshots_inner(
     let (mut events, mut notified) = evaluate_warnings(&state, &current, &fresh, &settings);
     append_debug_warning(&state, &settings, &fresh, &mut events, &mut notified);
     cache::save(&fresh, &notified);
+    crate::history::append_live(app, &fresh);
     *state.snapshots.write().await = fresh.clone();
     send_warnings(app, events);
     Ok(fresh)
@@ -232,6 +235,18 @@ pub fn start_background_polling(app: tauri::AppHandle, state: AppState) {
 #[tauri::command]
 pub async fn get_settings(state: State<'_, AppState>) -> Result<AppSettings, String> {
     Ok(state.settings.read().await.clone())
+}
+
+#[tauri::command]
+pub async fn get_history(
+    range: String,
+    state: State<'_, HistoryState>,
+) -> Result<HistoryPayload, String> {
+    let status = state.status.read().await.clone();
+    let store = state.store.clone();
+    tauri::async_runtime::spawn_blocking(move || store.query(&range, &status))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
