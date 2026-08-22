@@ -12,6 +12,7 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@lobehub/icons": "5.16.0",
     "@tauri-apps/api": "^2.8.0",
     "@tauri-apps/plugin-autostart": "^2.5.0",
     "@tauri-apps/plugin-dialog": "^2.4.0",

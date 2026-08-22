@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Check,
   ChevronDown,
@@ -73,9 +74,8 @@ function useMockSnapshots() {
 }
 
 function ProviderMark({ providerId, muted = false }: { providerId: ProviderId; muted?: boolean }) {
-  const provider = providerById(providerId);
   const Icon = providerIcons[providerId];
-  return <span className={`provider-glyph ${muted ? "is-muted" : ""}`} style={{ color: provider.accent }}><Icon /></span>;
+  return <span className={`provider-glyph ${muted ? "is-muted" : ""}`}><Icon size={22} /></span>;
 }
 
 function UsageBar({ window: usageWindow, accent }: { window: UsageWindow; accent: string }) {
@@ -206,7 +206,7 @@ export default function App() {
   const saveManual = (provider: ProviderId, value: string) => {
     void invoke("save_manual_credential", { provider, value }).catch(() => undefined);
   };
-  return <main className="app-shell"><header className="app-header"><div className="brand"><span>Burnrate</span></div><div className="header-actions"><button className="icon-button" onClick={() => void refresh()} aria-label="Refresh" data-refreshing={refreshing}><RefreshCw size={15} /></button><button className={`icon-button ${view === "settings" ? "is-active" : ""}`} onClick={() => setView(view === "settings" ? "overview" : "settings")} aria-label="Settings"><Settings2 size={15} /></button></div></header>
+  return <main className="app-shell"><header className="app-header" data-tauri-drag-region><div className="brand" data-tauri-drag-region><span data-tauri-drag-region>Burnrate</span></div><div className="header-actions"><button className="icon-button" onClick={() => void refresh()} aria-label="Refresh" data-refreshing={refreshing}><RefreshCw size={15} /></button><button className={`icon-button ${view === "settings" ? "is-active" : ""}`} onClick={() => setView(view === "settings" ? "overview" : "settings")} aria-label="Settings"><Settings2 size={15} /></button><button className="icon-button" onClick={() => void getCurrentWindow().close()} aria-label="Close"><X size={15} /></button></div></header>
     {view === "overview" ? <><div className="overview-meta"><span>LIVE USAGE</span><span>Updated {formatTime(new Date().toISOString())}</span></div><div className="cards">{visibleProviders.map((provider) => <ProviderCard key={provider.id} providerId={provider.id} snapshot={snapshotFor(provider.id)} profile={activeProfiles[provider.id]} profiles={profiles[provider.id] || ["Personal"]} onProfileChange={(profile) => setActiveProfiles((current) => ({ ...current, [provider.id]: profile }))} />)}</div></> : <Settings settings={settings} onSettingsChange={changeSettings} profiles={profiles} onDelete={deleteProfile} onSave={saveProfile} onSaveManual={saveManual} />}
     </main>;
 }

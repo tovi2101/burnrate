@@ -37,8 +37,8 @@ button:active { transform: scale(.97); }
 .provider-card.is-stale .usage-fill { opacity: .58; }
 .card-top { min-height: 24px; justify-content: space-between; gap: 12px; }
 .provider-heading { min-width: 0; gap: 10px; }
-.provider-glyph { display: inline-grid; width: 20px; height: 20px; flex: 0 0 20px; place-items: center; }
-.provider-glyph svg { display: block; width: 20px; height: 20px; }
+.provider-glyph { display: inline-grid; width: 32px; height: 32px; flex: 0 0 32px; place-items: center; border-radius: 9px; background: #1a1a1e; }
+.provider-glyph svg { display: block; width: 22px; height: 22px; }
 .provider-glyph.is-muted { opacity: .4; }
 .provider-copy { min-width: 0; }
 .provider-copy h2 { color: #f4f4f5; font-size: 13px; font-weight: 500; line-height: 1.2; letter-spacing: -.01em; }

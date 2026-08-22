@@ -262,10 +262,10 @@ pub fn run() {
                 .set_activation_policy(tauri::ActivationPolicy::Accessory)?;
             if app.get_webview_window("main").is_none() {
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                    .title("Burnrate")
+                    .title("")
                     .inner_size(380.0, 560.0)
                     .resizable(false)
-                    .decorations(true)
+                    .decorations(false)
                     .skip_taskbar(false)
                     .visible(false)
                     .build()?;

@@ -1,15 +1,13 @@
-import type { ComponentType, SVGProps } from "react";
+import { Claude, Codex, Cursor, Grok, OpenCode } from "@lobehub/icons";
+import type { ComponentType } from "react";
 import type { ProviderId } from "../../types";
-import { ClaudeIcon } from "./ClaudeIcon";
-import { CodexIcon } from "./CodexIcon";
-import { CursorIcon } from "./CursorIcon";
-import { GrokIcon } from "./GrokIcon";
-import { OpenCodeIcon } from "./OpenCodeIcon";
 
-export const providerIcons: Record<ProviderId, ComponentType<SVGProps<SVGSVGElement>>> = {
-  claude: ClaudeIcon,
-  codex: CodexIcon,
-  cursor: CursorIcon,
-  grok: GrokIcon,
-  opencode: OpenCodeIcon,
+type BrandIcon = ComponentType<{ size: number }>;
+
+export const providerIcons: Record<ProviderId, BrandIcon> = {
+  claude: Claude.Color,
+  codex: Codex.Color,
+  cursor: Cursor.Avatar,
+  grok: Grok.Avatar,
+  opencode: OpenCode.Avatar,
 };
