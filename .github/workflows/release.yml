@@ -52,6 +52,7 @@ jobs:
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
       - name: Report Apple signing mode
+        id: apple_signing
         if: matrix.platform == 'macos-latest'
         shell: bash
         env:
@@ -63,21 +64,38 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           if [[ -n "$APPLE_CERTIFICATE" && -n "$APPLE_CERTIFICATE_PASSWORD" && -n "$APPLE_SIGNING_IDENTITY" && -n "$APPLE_ID" && -n "$APPLE_PASSWORD" && -n "$APPLE_TEAM_ID" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
             echo "Apple signing and notarization secrets detected; building a signed, notarized app."
           else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
             echo "Apple signing secrets are incomplete; building unsigned. Gatekeeper instructions remain in README."
           fi
 
-      - name: Build and upload desktop bundles
+      - name: Build and upload signed Apple bundle
+        if: matrix.platform == 'macos-latest' && steps.apple_signing.outputs.enabled == 'true'
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY || '-' }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tagName: v__VERSION__
+          releaseName: Burnrate v__VERSION__
+          releaseBody: Install Burnrate and it will use your existing provider CLI logins automatically. See the README for unsigned-binary instructions.
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+
+      - name: Build and upload unsigned desktop bundles
+        if: matrix.platform != 'macos-latest' || steps.apple_signing.outputs.enabled != 'true'
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_SIGNING_IDENTITY: '-'
         with:
           tagName: v__VERSION__
           releaseName: Burnrate v__VERSION__
