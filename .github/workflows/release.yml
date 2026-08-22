@@ -45,6 +45,9 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Build frontend assets
+        run: npm run build
+
       - name: Build and upload desktop bundles
         uses: tauri-apps/tauri-action@v1
         env:
