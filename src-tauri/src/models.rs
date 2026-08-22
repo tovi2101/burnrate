@@ -12,7 +12,19 @@ pub struct AppSettings {
     pub launch_at_login: bool,
     #[serde(default, alias = "start_hidden_in_tray")]
     pub start_hidden_in_tray: bool,
+    #[serde(default = "default_limit_warnings", alias = "limit_warnings")]
+    pub limit_warnings: bool,
+    #[serde(default = "default_warning_thresholds", alias = "warning_thresholds")]
+    pub warning_thresholds: [u8; 2],
     pub theme: String,
+}
+
+fn default_limit_warnings() -> bool {
+    true
+}
+
+fn default_warning_thresholds() -> [u8; 2] {
+    [50, 80]
 }
 
 impl Default for AppSettings {
@@ -28,6 +40,8 @@ impl Default for AppSettings {
             refresh_seconds: 60,
             launch_at_login: false,
             start_hidden_in_tray: false,
+            limit_warnings: default_limit_warnings(),
+            warning_thresholds: default_warning_thresholds(),
             theme: "dark".into(),
         }
     }

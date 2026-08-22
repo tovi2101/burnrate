@@ -32,5 +32,7 @@ export interface AppSettings {
   refreshSeconds: number;
   launchAtLogin: boolean;
   startHiddenInTray: boolean;
+  limitWarnings: boolean;
+  warningThresholds: [number, number];
   theme: "dark" | "light" | "system";
 }

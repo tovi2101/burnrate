@@ -5,8 +5,8 @@ use crate::pace::PaceTracker;
 use crate::profiles;
 use crate::providers;
 use crate::settings;
+use crate::warnings::{WarningEvent, WarningTracker};
 use serde::Serialize;
-#[cfg(debug_assertions)]
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -14,13 +14,47 @@ use std::time::Duration;
 #[cfg(debug_assertions)]
 use tauri::Manager;
 use tauri::State;
+use tauri_plugin_notification::NotificationExt;
 use tokio::sync::RwLock;
 
 pub struct AppState {
     pub snapshots: Arc<RwLock<Vec<UsageSnapshot>>>,
     pub settings: Arc<RwLock<AppSettings>>,
     pub pace: Arc<Mutex<PaceTracker>>,
+    pub warnings: Arc<Mutex<WarningTracker>>,
     pub tray: Arc<Mutex<TrayRegistration>>,
+}
+
+fn evaluate_warnings(
+    state: &AppState,
+    previous: &[UsageSnapshot],
+    current: &[UsageSnapshot],
+    settings: &AppSettings,
+) -> (Vec<WarningEvent>, BTreeMap<String, Vec<u8>>) {
+    let Ok(mut warnings) = state.warnings.lock() else {
+        return (Vec::new(), BTreeMap::new());
+    };
+    let events = warnings.evaluate(
+        previous,
+        current,
+        settings.limit_warnings,
+        settings.warning_thresholds,
+    );
+    (events, warnings.persisted())
+}
+
+fn send_warnings(app: &tauri::AppHandle, events: Vec<WarningEvent>) {
+    for event in events {
+        if let Err(error) = app
+            .notification()
+            .builder()
+            .title("Burnrate")
+            .body(event.body)
+            .show()
+        {
+            eprintln!("notification: show failed: {error}");
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -31,11 +65,15 @@ pub struct TrayRegistration {
 }
 
 #[tauri::command]
-pub async fn get_snapshots(state: State<'_, AppState>) -> Result<Vec<UsageSnapshot>, String> {
+pub async fn get_snapshots(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Vec<UsageSnapshot>, String> {
     let current = state.snapshots.read().await;
     if current.is_empty() {
         drop(current);
-        let refresh_seconds = state.settings.read().await.refresh_seconds;
+        let settings = state.settings.read().await.clone();
+        let refresh_seconds = settings.refresh_seconds;
         let fresh = live::merge_live_snapshots(
             &[],
             live::fetch_live(Duration::from_secs(refresh_seconds)).await,
@@ -48,17 +86,23 @@ pub async fn get_snapshots(state: State<'_, AppState>) -> Result<Vec<UsageSnapsh
         if let Ok(mut pace) = state.pace.lock() {
             pace.apply(&mut fresh, Duration::from_secs(refresh_seconds));
         }
-        cache::save(&fresh);
+        let (events, notified) = evaluate_warnings(&state, &[], &fresh, &settings);
+        cache::save(&fresh, &notified);
         *state.snapshots.write().await = fresh.clone();
+        send_warnings(&app, events);
         return Ok(fresh);
     }
     Ok(current.clone())
 }
 
 #[tauri::command]
-pub async fn refresh_snapshots(state: State<'_, AppState>) -> Result<Vec<UsageSnapshot>, String> {
+pub async fn refresh_snapshots(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Vec<UsageSnapshot>, String> {
     let current = state.snapshots.read().await.clone();
-    let refresh_seconds = state.settings.read().await.refresh_seconds;
+    let settings = state.settings.read().await.clone();
+    let refresh_seconds = settings.refresh_seconds;
     let fresh = live::merge_live_snapshots(
         &current,
         live::fetch_live(Duration::from_secs(refresh_seconds)).await,
@@ -70,13 +114,15 @@ pub async fn refresh_snapshots(state: State<'_, AppState>) -> Result<Vec<UsageSn
             cache::stale(&current)
         }
     } else {
-        cache::save(&fresh);
         fresh
     };
     if let Ok(mut pace) = state.pace.lock() {
         pace.apply(&mut fresh, Duration::from_secs(refresh_seconds));
     }
+    let (events, notified) = evaluate_warnings(&state, &current, &fresh, &settings);
+    cache::save(&fresh, &notified);
     *state.snapshots.write().await = fresh.clone();
+    send_warnings(&app, events);
     Ok(fresh)
 }
 
@@ -90,6 +136,12 @@ pub async fn save_settings(
     state: State<'_, AppState>,
     settings: AppSettings,
 ) -> Result<(), String> {
+    if settings.warning_thresholds[0] == 0
+        || settings.warning_thresholds[1] > 99
+        || settings.warning_thresholds[0] >= settings.warning_thresholds[1]
+    {
+        return Err("Warning thresholds must be ordered percentages from 1 to 99".into());
+    }
     eprintln!("settings: toggle received");
     settings::save(&settings)?;
     *state.settings.write().await = settings;

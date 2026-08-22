@@ -26,10 +26,12 @@ fn summary(settings: &AppSettings) -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!(
-        "enabled=[{enabled}] refresh_seconds={} launch_at_login={} start_hidden_in_tray={} theme={}",
+        "enabled=[{enabled}] refresh_seconds={} launch_at_login={} start_hidden_in_tray={} limit_warnings={} warning_thresholds={:?} theme={}",
         settings.refresh_seconds,
         settings.launch_at_login,
         settings.start_hidden_in_tray,
+        settings.limit_warnings,
+        settings.warning_thresholds,
         settings.theme
     )
 }

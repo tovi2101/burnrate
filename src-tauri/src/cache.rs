@@ -1,6 +1,29 @@
 use crate::models::{SnapshotStatus, UsageSnapshot};
 use chrono::Utc;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
+
+#[derive(Debug, Default)]
+pub struct CachedState {
+    pub snapshots: Vec<UsageSnapshot>,
+    pub notified: BTreeMap<String, Vec<u8>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct CacheDocument {
+    version: u8,
+    snapshots: Vec<UsageSnapshot>,
+    #[serde(default)]
+    notified: BTreeMap<String, Vec<u8>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum StoredCache {
+    Document(CacheDocument),
+    Legacy(Vec<UsageSnapshot>),
+}
 
 fn cache_path() -> PathBuf {
     let root = if cfg!(windows) {
@@ -19,12 +42,16 @@ fn cache_path() -> PathBuf {
     root.join("burnrate").join("usage-cache.json")
 }
 
-pub fn load() -> Vec<UsageSnapshot> {
+pub fn load() -> CachedState {
     let Ok(bytes) = std::fs::read(cache_path()) else {
-        return Vec::new();
+        return CachedState::default();
     };
-    let Ok(mut snapshots) = serde_json::from_slice::<Vec<UsageSnapshot>>(&bytes) else {
-        return Vec::new();
+    let Ok(stored) = serde_json::from_slice::<StoredCache>(&bytes) else {
+        return CachedState::default();
+    };
+    let (mut snapshots, notified) = match stored {
+        StoredCache::Document(document) => (document.snapshots, document.notified),
+        StoredCache::Legacy(snapshots) => (snapshots, BTreeMap::new()),
     };
     for snapshot in &mut snapshots {
         snapshot.status = SnapshotStatus::Stale;
@@ -32,15 +59,23 @@ pub fn load() -> Vec<UsageSnapshot> {
             window.pace_limit_minutes = None;
         }
     }
-    snapshots
+    CachedState {
+        snapshots,
+        notified,
+    }
 }
 
-pub fn save(snapshots: &[UsageSnapshot]) {
+pub fn save(snapshots: &[UsageSnapshot], notified: &BTreeMap<String, Vec<u8>>) {
     let path = cache_path();
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    if let Ok(bytes) = serde_json::to_vec(snapshots) {
+    let document = CacheDocument {
+        version: 1,
+        snapshots: snapshots.to_vec(),
+        notified: notified.clone(),
+    };
+    if let Ok(bytes) = serde_json::to_vec(&document) {
         let temporary = path.with_extension("json.tmp");
         if std::fs::write(&temporary, bytes).is_ok() {
             let _ = std::fs::rename(temporary, path);
@@ -56,6 +91,9 @@ pub fn stale(snapshots: &[UsageSnapshot]) -> Vec<UsageSnapshot> {
             snapshot.status = SnapshotStatus::Stale;
             snapshot.error_message = None;
             snapshot.fetched_at = snapshot.fetched_at.min(Utc::now());
+            for window in &mut snapshot.windows {
+                window.pace_limit_minutes = None;
+            }
             snapshot
         })
         .collect()

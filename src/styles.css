@@ -129,6 +129,11 @@ button:active { transform: scale(.97); }
 .segmented button { padding: 5px 7px; border-radius: 5px; color: #fff; font-size: 8px; text-transform: capitalize; opacity: .4; }
 .segmented button:hover { opacity: .8; }
 .segmented button.active { color: #f4f4f5; background: rgba(255, 255, 255, .09); opacity: 1; }
+.threshold-inputs { display: flex; gap: 5px; }
+.threshold-inputs label { display: flex; align-items: center; gap: 2px; color: rgba(255, 255, 255, .4); font-size: 8px; }
+.threshold-inputs input { width: 43px; padding: 5px 4px; border: 1px solid #29292f; border-radius: 6px; outline: none; color: #f4f4f5; background: #131316; appearance: textfield; font-size: 9px; font-variant-numeric: tabular-nums; text-align: right; }
+.threshold-inputs input::-webkit-inner-spin-button, .threshold-inputs input::-webkit-outer-spin-button { margin: 0; appearance: none; }
+.threshold-inputs input:focus { border-color: #6e56cf; }
 .privacy-note { align-items: flex-start; gap: 8px; margin: 12px 0 4px; padding: 10px; border: 1px solid rgba(16, 163, 127, .15); border-radius: 9px; color: rgba(255, 255, 255, .48); background: rgba(16, 163, 127, .045); font-size: 9px; line-height: 1.45; }
 .privacy-note svg { flex: 0 0 auto; margin-top: 1px; color: #10a37f; }
 .privacy-note strong { color: rgba(255, 255, 255, .72); font-weight: 500; }

@@ -7,6 +7,7 @@ mod pace;
 pub mod profiles;
 mod providers;
 mod settings;
+mod warnings;
 
 use commands::{AppState, TrayRegistration};
 use std::sync::Arc;
@@ -238,13 +239,17 @@ pub fn run() {
     let loaded_settings = settings::load();
     let start_hidden_in_tray = loaded_settings.start_hidden_in_tray;
     tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main_window(app);
         }))
         .manage(AppState {
-            snapshots: Arc::new(RwLock::new(cached)),
+            snapshots: Arc::new(RwLock::new(cached.snapshots)),
             settings: Arc::new(RwLock::new(loaded_settings)),
             pace: Arc::new(std::sync::Mutex::new(pace::PaceTracker::default())),
+            warnings: Arc::new(std::sync::Mutex::new(
+                warnings::WarningTracker::from_persisted(cached.notified),
+            )),
             tray: Arc::new(std::sync::Mutex::new(TrayRegistration::default())),
         })
         .invoke_handler(invoke_handler!())
