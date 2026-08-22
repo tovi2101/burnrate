@@ -27,6 +27,18 @@ impl Default for AppSettings {
     }
 }
 
+impl std::fmt::Display for ProviderId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+            Self::Grok => "grok",
+            Self::Cursor => "cursor",
+            Self::Opencode => "opencode",
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum ProviderId {
