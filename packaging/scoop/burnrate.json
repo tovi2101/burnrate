@@ -5,7 +5,8 @@
   "license": "MIT",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/tovi2101/burnrate/releases/download/v1.3.0/Burnrate_1.3.0_x64-setup.exe"
+      "url": "https://github.com/tovi2101/burnrate/releases/download/v1.3.0/Burnrate_1.3.0_x64-setup.exe",
+      "hash": "5cf2e281ed00052b03499fe13ab539b25996c3c7cdb22e07ed6062a5a8848fbb"
     }
   },
   "installer": {
