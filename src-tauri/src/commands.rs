@@ -1,6 +1,7 @@
 use crate::cache;
 use crate::live;
 use crate::models::*;
+use crate::pace::PaceTracker;
 use crate::profiles;
 use crate::providers;
 use crate::settings;
@@ -18,6 +19,7 @@ use tokio::sync::RwLock;
 pub struct AppState {
     pub snapshots: Arc<RwLock<Vec<UsageSnapshot>>>,
     pub settings: Arc<RwLock<AppSettings>>,
+    pub pace: Arc<Mutex<PaceTracker>>,
     pub tray: Arc<Mutex<TrayRegistration>>,
 }
 
@@ -38,11 +40,14 @@ pub async fn get_snapshots(state: State<'_, AppState>) -> Result<Vec<UsageSnapsh
             &[],
             live::fetch_live(Duration::from_secs(refresh_seconds)).await,
         );
-        let fresh = if fresh.is_empty() {
+        let mut fresh = if fresh.is_empty() {
             providers::mock_snapshots().await
         } else {
             fresh
         };
+        if let Ok(mut pace) = state.pace.lock() {
+            pace.apply(&mut fresh, Duration::from_secs(refresh_seconds));
+        }
         cache::save(&fresh);
         *state.snapshots.write().await = fresh.clone();
         return Ok(fresh);
@@ -58,7 +63,7 @@ pub async fn refresh_snapshots(state: State<'_, AppState>) -> Result<Vec<UsageSn
         &current,
         live::fetch_live(Duration::from_secs(refresh_seconds)).await,
     );
-    let fresh = if fresh.is_empty() {
+    let mut fresh = if fresh.is_empty() {
         if current.is_empty() {
             providers::mock_snapshots().await
         } else {
@@ -68,6 +73,9 @@ pub async fn refresh_snapshots(state: State<'_, AppState>) -> Result<Vec<UsageSn
         cache::save(&fresh);
         fresh
     };
+    if let Ok(mut pace) = state.pace.lock() {
+        pace.apply(&mut fresh, Duration::from_secs(refresh_seconds));
+    }
     *state.snapshots.write().await = fresh.clone();
     Ok(fresh)
 }

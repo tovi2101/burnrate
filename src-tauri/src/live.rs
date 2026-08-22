@@ -161,6 +161,7 @@ fn window(label: &str, pct: f64, reset: Option<DateTime<Utc>>) -> UsageWindow {
         label: label.into(),
         used_pct: pct.clamp(0.0, 100.0),
         resets_at: reset,
+        pace_limit_minutes: None,
     }
 }
 

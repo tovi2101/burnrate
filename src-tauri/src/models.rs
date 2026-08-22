@@ -60,6 +60,8 @@ pub struct UsageWindow {
     pub label: String,
     pub used_pct: f64,
     pub resets_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub pace_limit_minutes: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

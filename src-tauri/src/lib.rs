@@ -3,6 +3,7 @@ mod cache;
 mod commands;
 pub mod live;
 pub mod models;
+mod pace;
 pub mod profiles;
 mod providers;
 mod settings;
@@ -243,6 +244,7 @@ pub fn run() {
         .manage(AppState {
             snapshots: Arc::new(RwLock::new(cached)),
             settings: Arc::new(RwLock::new(loaded_settings)),
+            pace: Arc::new(std::sync::Mutex::new(pace::PaceTracker::default())),
             tray: Arc::new(std::sync::Mutex::new(TrayRegistration::default())),
         })
         .invoke_handler(invoke_handler!())

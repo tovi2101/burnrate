@@ -56,6 +56,12 @@ function toneFor(value: number) {
   return "normal";
 }
 
+function formatPace(minutes: number) {
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return hours > 0 ? `${hours}h ${remainder}m` : `${remainder}m`;
+}
+
 function useMockSnapshots() {
   const [snapshots, setSnapshots] = useState<UsageSnapshot[]>(fallbackSnapshots);
   const [refreshing, setRefreshing] = useState(false);
@@ -90,15 +96,8 @@ function UsageBar({ window: usageWindow, accent }: { window: UsageWindow; accent
     <div className="usage-label"><span>{usageWindow.label}</span><span className={`usage-number ${tone}`}>{Math.round(usageWindow.used_pct)}%</span></div>
     <div className="usage-track"><div className={`usage-fill ${canAnimate ? "can-animate" : ""}`} style={{ width: `${Math.min(100, Math.max(0, usageWindow.used_pct))}%`, background: fill }} /></div>
     <div className="usage-meta"><span><Clock3 size={12} /> resets in {formatCountdown(usageWindow.resets_at)}</span><span>{formatTime(usageWindow.resets_at)}</span></div>
+    {usageWindow.pace_limit_minutes != null && <div className="pace"><span className="pace-dot" /> at this pace: limit in <strong>{formatPace(usageWindow.pace_limit_minutes)}</strong></div>}
   </div>;
-}
-
-function BurnRate({ snapshot }: { snapshot: UsageSnapshot }) {
-  const highest = Math.max(...snapshot.windows.map((window) => window.used_pct), 0);
-  const paceMinutes = Math.max(20, Math.round((100 - highest) * 2.1));
-  const h = Math.floor(paceMinutes / 60);
-  const m = paceMinutes % 60;
-  return <div className="pace"><span className="pace-dot" /> at this pace: limit in <strong>{h ? `${h}h ${m}m` : `${m}m`}</strong><span className="pace-muted"> · last hour</span></div>;
 }
 
 function ProfilePicker({ profile, profiles, onChange }: { profile: string; profiles: string[]; onChange: (value: string) => void }) {
@@ -124,7 +123,6 @@ function ProviderCard({ providerId, snapshot, profile, profiles, onProfileChange
     <div className="card-top"><div className="provider-heading"><ProviderMark providerId={providerId} /><div className="provider-copy"><div className="title-line"><h2>{provider.name}</h2>{status === "fresh" ? <span className="fresh-pill">LIVE</span> : <span className="stale-pill">STALE SINCE {formatTime(snapshot.fetched_at)}</span>}</div><p>{snapshot.plan_name || "Usage"}</p></div></div>{profiles.length > 1 && <ProfilePicker profile={profile} profiles={profiles} onChange={onProfileChange} />}</div>
     <div className="usage-list">{snapshot.windows.map((window) => <UsageBar key={window.label} window={window} accent={provider.accent} />)}</div>
     {snapshot.error_message && <div className="rate-limit-line"><Clock3 size={11} />{snapshot.error_message}</div>}
-    <BurnRate snapshot={snapshot} />
   </section>;
 }
 

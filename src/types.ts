@@ -6,6 +6,7 @@ export interface UsageWindow {
   label: WindowLabel;
   used_pct: number;
   resets_at?: string | null;
+  pace_limit_minutes?: number | null;
 }
 
 export interface UsageSnapshot {

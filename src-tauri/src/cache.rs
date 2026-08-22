@@ -28,6 +28,9 @@ pub fn load() -> Vec<UsageSnapshot> {
     };
     for snapshot in &mut snapshots {
         snapshot.status = SnapshotStatus::Stale;
+        for window in &mut snapshot.windows {
+            window.pace_limit_minutes = None;
+        }
     }
     snapshots
 }

@@ -32,6 +32,7 @@ impl MockProvider {
             label: label.to_string(),
             used_pct: pct.clamp(0.0, 100.0),
             resets_at: reset,
+            pace_limit_minutes: None,
         }
     }
 
