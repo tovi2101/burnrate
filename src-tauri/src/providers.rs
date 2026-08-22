@@ -2,6 +2,7 @@ use crate::models::*;
 use async_trait::async_trait;
 use chrono::{DateTime, TimeZone, Utc};
 use serde_json::Value;
+use std::time::Duration;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -12,6 +13,8 @@ pub enum ProviderError {
     Parse,
     #[error("provider request failed")]
     Request,
+    #[error("provider rate limited requests for {0:?}")]
+    RateLimited(Duration),
 }
 
 #[async_trait]

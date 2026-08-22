@@ -6,15 +6,19 @@ use crate::profiles;
 use crate::providers::{Provider, ProviderError};
 use async_trait::async_trait;
 use chrono::{DateTime, TimeZone, Utc};
-use reqwest::{Client, StatusCode};
+use reqwest::{header::RETRY_AFTER, Client, Response, StatusCode};
 use rusqlite::Connection;
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
-use tokio::time::{timeout, Duration};
+use tokio::time::timeout;
+
+const DEFAULT_RATE_LIMIT_BACKOFF: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum LiveError {
@@ -22,6 +26,8 @@ pub enum LiveError {
     Missing,
     #[error("request failed")]
     Request,
+    #[error("rate limited for {0:?}")]
+    RateLimited(Duration),
     #[error("response parse failed")]
     Parse,
 }
@@ -34,6 +40,14 @@ fn can_try(provider: &str) -> bool {
         .lock()
         .map(|state| state.can_try(provider))
         .unwrap_or(true)
+}
+
+fn is_rate_limited(provider: &str) -> bool {
+    BACKOFF
+        .get_or_init(|| Mutex::new(FailureBackoff::default()))
+        .lock()
+        .map(|state| state.is_rate_limited(provider))
+        .unwrap_or(false)
 }
 
 fn record_success(provider: &str) {
@@ -51,6 +65,47 @@ fn record_failure(provider: &str) {
         .lock()
     {
         state.record_failure(provider);
+    }
+}
+
+fn record_rate_limit(provider: &str, retry_after: Duration) {
+    if let Ok(mut state) = BACKOFF
+        .get_or_init(|| Mutex::new(FailureBackoff::default()))
+        .lock()
+    {
+        state.record_rate_limit(provider, retry_after);
+    }
+}
+
+fn retry_after(response: &Response) -> Duration {
+    response
+        .headers()
+        .get(RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| {
+            value
+                .parse::<u64>()
+                .map(Duration::from_secs)
+                .ok()
+                .or_else(|| {
+                    DateTime::parse_from_rfc2822(value).ok().and_then(|date| {
+                        date.with_timezone(&Utc)
+                            .signed_duration_since(Utc::now())
+                            .to_std()
+                            .ok()
+                    })
+                })
+        })
+        .unwrap_or(DEFAULT_RATE_LIMIT_BACKOFF)
+}
+
+fn response_error(response: &Response) -> Option<LiveError> {
+    if response.status().is_success() {
+        None
+    } else if response.status() == StatusCode::TOO_MANY_REQUESTS {
+        Some(LiveError::RateLimited(retry_after(response)))
+    } else {
+        Some(LiveError::Request)
     }
 }
 
@@ -162,6 +217,9 @@ async fn claude(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveErr
                 .send()
                 .await
                 .map_err(|_| LiveError::Request)?;
+            if response.status() == StatusCode::TOO_MANY_REQUESTS {
+                return Err(LiveError::RateLimited(retry_after(&response)));
+            }
             if response.status() == StatusCode::OK {
                 let refreshed = response
                     .json::<Value>()
@@ -199,8 +257,8 @@ async fn claude(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveErr
         .send()
         .await
         .map_err(|_| LiveError::Request)?;
-    if !response.status().is_success() {
-        return Err(LiveError::Request);
+    if let Some(error) = response_error(&response) {
+        return Err(error);
     }
     let data = response
         .json::<Value>()
@@ -265,6 +323,9 @@ async fn codex(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveErro
                 .header("Content-Type", "application/json")
                 .json(&json!({ "client_id": "app_EMoamEEZ73f0CkXaXp7hrann", "grant_type": "refresh_token", "refresh_token": refresh_token, "scope": "openid profile email" }))
                 .send().await.map_err(|_| LiveError::Request)?;
+            if refresh_response.status() == StatusCode::TOO_MANY_REQUESTS {
+                return Err(LiveError::RateLimited(retry_after(&refresh_response)));
+            }
             if refresh_response.status().is_success() {
                 let refreshed = refresh_response
                     .json::<Value>()
@@ -296,8 +357,8 @@ async fn codex(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveErro
             }
         }
     }
-    if !response.status().is_success() {
-        return Err(LiveError::Request);
+    if let Some(error) = response_error(&response) {
+        return Err(error);
     }
     let data = response
         .json::<Value>()
@@ -377,8 +438,8 @@ async fn grok(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveError
         .send()
         .await
         .map_err(|_| LiveError::Request)?;
-    if !response.status().is_success() {
-        return Err(LiveError::Request);
+    if let Some(error) = response_error(&response) {
+        return Err(error);
     }
     let data = response
         .json::<Value>()
@@ -501,8 +562,8 @@ pub async fn fetch_opencode_with_credentials(
         request = request.header("Cookie", cookie);
     }
     let response = request.send().await.map_err(|_| LiveError::Request)?;
-    if !response.status().is_success() {
-        return Err(LiveError::Request);
+    if let Some(error) = response_error(&response) {
+        return Err(error);
     }
     let data = response
         .json::<Value>()
@@ -608,8 +669,8 @@ pub async fn fetch_cursor_with_cookie(
         .send()
         .await
         .map_err(|_| LiveError::Request)?;
-    if !response.status().is_success() {
-        return Err(LiveError::Request);
+    if let Some(error) = response_error(&response) {
+        return Err(error);
     }
     let data = response
         .json::<Value>()
@@ -645,12 +706,74 @@ pub fn parse_cursor_usage_response(
     ))
 }
 
-pub async fn fetch_live() -> Vec<UsageSnapshot> {
+#[derive(Default)]
+pub struct FetchLiveResult {
+    snapshots: Vec<UsageSnapshot>,
+    stale_keys: HashSet<String>,
+}
+
+fn snapshot_key(snapshot: &UsageSnapshot) -> String {
+    format!(
+        "{}:{}",
+        provider_key(&snapshot.provider),
+        snapshot.profile_name
+    )
+}
+
+fn record_provider_result(
+    key: &str,
+    result: Result<UsageSnapshot, ProviderError>,
+    refresh: &mut FetchLiveResult,
+) {
+    match result {
+        Ok(snapshot) => {
+            record_success(key);
+            refresh.snapshots.push(snapshot);
+        }
+        Err(ProviderError::RateLimited(delay)) => {
+            record_rate_limit(key, delay);
+            refresh.stale_keys.insert(key.to_owned());
+        }
+        Err(_) => {
+            record_failure(key);
+        }
+    }
+}
+
+fn mark_backed_off(key: &str, refresh: &mut FetchLiveResult) {
+    refresh.stale_keys.insert(key.to_owned());
+}
+
+pub fn merge_live_snapshots(
+    previous: &[UsageSnapshot],
+    refresh: FetchLiveResult,
+) -> Vec<UsageSnapshot> {
+    let fresh_keys = refresh
+        .snapshots
+        .iter()
+        .map(snapshot_key)
+        .collect::<HashSet<_>>();
+    let mut merged = refresh.snapshots;
+    merged.extend(previous.iter().filter_map(|snapshot| {
+        let key = snapshot_key(snapshot);
+        if !fresh_keys.contains(&key) && refresh.stale_keys.contains(&key) {
+            let mut stale = snapshot.clone();
+            stale.status = SnapshotStatus::Stale;
+            stale.error_message = None;
+            Some(stale)
+        } else {
+            None
+        }
+    }));
+    merged
+}
+
+pub async fn fetch_live() -> FetchLiveResult {
     let client = match Client::builder().user_agent("Burnrate/0.1").build() {
         Ok(client) => client,
-        Err(_) => return Vec::new(),
+        Err(_) => return FetchLiveResult::default(),
     };
-    let mut snapshots = Vec::new();
+    let mut refresh = FetchLiveResult::default();
     let claude_provider = ClaudeProvider {
         client: client.clone(),
     };
@@ -662,13 +785,9 @@ pub async fn fetch_live() -> Vec<UsageSnapshot> {
             profiles::credential(&ProviderId::Claude, &profile).is_some()
         };
         if available && can_try(&key) {
-            match claude_provider.fetch(&profile).await {
-                Ok(value) => {
-                    record_success(&key);
-                    snapshots.push(value);
-                }
-                Err(_) => record_failure(&key),
-            }
+            record_provider_result(&key, claude_provider.fetch(&profile).await, &mut refresh);
+        } else if available && is_rate_limited(&key) {
+            mark_backed_off(&key, &mut refresh);
         }
     }
     let codex_provider = CodexProvider {
@@ -682,13 +801,9 @@ pub async fn fetch_live() -> Vec<UsageSnapshot> {
             profiles::credential(&ProviderId::Codex, &profile).is_some()
         };
         if available && can_try(&key) {
-            match codex_provider.fetch(&profile).await {
-                Ok(value) => {
-                    record_success(&key);
-                    snapshots.push(value);
-                }
-                Err(_) => record_failure(&key),
-            }
+            record_provider_result(&key, codex_provider.fetch(&profile).await, &mut refresh);
+        } else if available && is_rate_limited(&key) {
+            mark_backed_off(&key, &mut refresh);
         }
     }
     let grok_provider = GrokProvider {
@@ -702,13 +817,9 @@ pub async fn fetch_live() -> Vec<UsageSnapshot> {
             profiles::credential(&ProviderId::Grok, &profile).is_some()
         };
         if available && can_try(&key) {
-            match grok_provider.fetch(&profile).await {
-                Ok(value) => {
-                    record_success(&key);
-                    snapshots.push(value);
-                }
-                Err(_) => record_failure(&key),
-            }
+            record_provider_result(&key, grok_provider.fetch(&profile).await, &mut refresh);
+        } else if available && is_rate_limited(&key) {
+            mark_backed_off(&key, &mut refresh);
         }
     }
     let opencode_provider = OpencodeProvider {
@@ -722,13 +833,9 @@ pub async fn fetch_live() -> Vec<UsageSnapshot> {
             profiles::credential(&ProviderId::Opencode, &profile).is_some()
         };
         if available && can_try(&key) {
-            match opencode_provider.fetch(&profile).await {
-                Ok(value) => {
-                    record_success(&key);
-                    snapshots.push(value);
-                }
-                Err(_) => record_failure(&key),
-            }
+            record_provider_result(&key, opencode_provider.fetch(&profile).await, &mut refresh);
+        } else if available && is_rate_limited(&key) {
+            mark_backed_off(&key, &mut refresh);
         }
     }
     let cursor_provider = CursorProvider {
@@ -742,16 +849,12 @@ pub async fn fetch_live() -> Vec<UsageSnapshot> {
             profiles::credential(&ProviderId::Cursor, &profile).is_some()
         };
         if available && can_try(&key) {
-            match cursor_provider.fetch(&profile).await {
-                Ok(value) => {
-                    record_success(&key);
-                    snapshots.push(value);
-                }
-                Err(_) => record_failure(&key),
-            }
+            record_provider_result(&key, cursor_provider.fetch(&profile).await, &mut refresh);
+        } else if available && is_rate_limited(&key) {
+            mark_backed_off(&key, &mut refresh);
         }
     }
-    snapshots
+    refresh
 }
 
 pub fn detected() -> Vec<DetectedProvider> {
@@ -846,6 +949,7 @@ fn provider_error(error: LiveError) -> ProviderError {
         LiveError::Missing => ProviderError::NotLoggedIn,
         LiveError::Parse => ProviderError::Parse,
         LiveError::Request => ProviderError::Request,
+        LiveError::RateLimited(delay) => ProviderError::RateLimited(delay),
     }
 }
 
@@ -913,5 +1017,117 @@ impl Provider for OpencodeProvider {
         opencode(profile, &self.client)
             .await
             .map_err(provider_error)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+
+    fn rate_limited_endpoint(retry_after: Option<&str>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind rate-limit endpoint");
+        let address = listener.local_addr().expect("read rate-limit address");
+        let retry_after = retry_after.map(str::to_owned);
+        thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request);
+            let retry_header = retry_after
+                .map(|value| format!("Retry-After: {value}\r\n"))
+                .unwrap_or_default();
+            let response = format!(
+                "HTTP/1.1 429 Too Many Requests\r\n{retry_header}Content-Length: 0\r\nConnection: close\r\n\r\n"
+            );
+            let _ = stream.write_all(response.as_bytes());
+        });
+        format!("http://{address}/usage")
+    }
+
+    async fn forced_rate_limit(retry_after: Option<&str>) -> LiveError {
+        let client = Client::builder()
+            .no_proxy()
+            .build()
+            .expect("build test client");
+        let response = client
+            .get(rate_limited_endpoint(retry_after))
+            .send()
+            .await
+            .expect("receive forced 429");
+        response_error(&response).expect("429 produces an error")
+    }
+
+    #[tokio::test]
+    async fn retry_after_header_controls_provider_backoff() {
+        assert_eq!(
+            forced_rate_limit(Some("47")).await,
+            LiveError::RateLimited(Duration::from_secs(47))
+        );
+    }
+
+    #[tokio::test]
+    async fn rate_limit_keeps_last_card_values_stale_and_does_not_block_other_providers() {
+        let error = forced_rate_limit(None).await;
+        assert_eq!(
+            error,
+            LiveError::RateLimited(DEFAULT_RATE_LIMIT_BACKOFF),
+            "429 without Retry-After backs off for at least five minutes"
+        );
+
+        let previous_claude = snapshot(
+            ProviderId::Claude,
+            "429-test",
+            Some("Claude Pro".into()),
+            vec![window("5h", 42.0, None)],
+        );
+        let fresh_codex = snapshot(
+            ProviderId::Codex,
+            "429-test",
+            Some("ChatGPT Plus".into()),
+            vec![window("5h", 19.0, None)],
+        );
+        let claude_key = snapshot_key(&previous_claude);
+        let codex_key = snapshot_key(&fresh_codex);
+        let mut refresh = FetchLiveResult::default();
+
+        record_provider_result(&claude_key, Err(provider_error(error)), &mut refresh);
+        record_provider_result(&codex_key, Ok(fresh_codex), &mut refresh);
+
+        assert!(
+            !can_try(&claude_key),
+            "rate-limited Claude stays backed off"
+        );
+        assert!(is_rate_limited(&claude_key));
+        assert!(can_try(&codex_key), "Claude backoff does not block Codex");
+        assert!(!is_rate_limited(&codex_key));
+
+        let merged = merge_live_snapshots(&[previous_claude], refresh);
+        let claude = merged
+            .iter()
+            .find(|item| item.provider == ProviderId::Claude)
+            .expect("Claude card remains present");
+        let codex = merged
+            .iter()
+            .find(|item| item.provider == ProviderId::Codex)
+            .expect("Codex keeps polling");
+
+        assert!(matches!(claude.status, SnapshotStatus::Stale));
+        assert_eq!(claude.windows.len(), 1);
+        assert!((claude.windows[0].used_pct - 42.0).abs() < f64::EPSILON);
+        assert!(claude.error_message.is_none());
+        assert_eq!(
+            serde_json::to_value(claude)
+                .expect("serialize stale card")
+                .get("status")
+                .and_then(Value::as_str),
+            Some("stale"),
+            "the card receives the stale tag instead of error or empty state"
+        );
+        assert!(matches!(codex.status, SnapshotStatus::Fresh));
+        assert!((codex.windows[0].used_pct - 19.0).abs() < f64::EPSILON);
     }
 }

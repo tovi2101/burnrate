@@ -32,7 +32,7 @@ pub async fn get_snapshots(state: State<'_, AppState>) -> Result<Vec<UsageSnapsh
     let current = state.snapshots.read().await;
     if current.is_empty() {
         drop(current);
-        let fresh = live::fetch_live().await;
+        let fresh = live::merge_live_snapshots(&[], live::fetch_live().await);
         let fresh = if fresh.is_empty() {
             providers::mock_snapshots().await
         } else {
@@ -47,9 +47,9 @@ pub async fn get_snapshots(state: State<'_, AppState>) -> Result<Vec<UsageSnapsh
 
 #[tauri::command]
 pub async fn refresh_snapshots(state: State<'_, AppState>) -> Result<Vec<UsageSnapshot>, String> {
-    let fresh = live::fetch_live().await;
+    let current = state.snapshots.read().await.clone();
+    let fresh = live::merge_live_snapshots(&current, live::fetch_live().await);
     let fresh = if fresh.is_empty() {
-        let current = state.snapshots.read().await.clone();
         if current.is_empty() {
             providers::mock_snapshots().await
         } else {
