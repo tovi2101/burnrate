@@ -39,36 +39,35 @@ windows are omitted; a provider error keeps the last successful snapshot and mar
   Headers: `Authorization: Bearer <accessToken>`, `Accept: application/json`,
   `Content-Type: application/json`, `anthropic-beta: oauth-2025-04-20`, and
   `User-Agent: claude-code/<detected version>`.
-* Profile request (optional identity): `GET https://api.anthropic.com/api/oauth/profile` with
-  `Authorization`, `Accept`, and `Content-Type`.
-* Refresh: when `expiresAt` is expired, `POST https://platform.claude.com/v1/oauth/token` with
-  `Content-Type: application/x-www-form-urlencoded` and `Accept: application/json`; body fields
-  `grant_type=refresh_token`, `refresh_token=<refreshToken>`, and the public Claude Code OAuth
-  `client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e`. Response fields are `access_token`, optional
-  `refresh_token`, and `expires_in` seconds. Persist a refreshed current CLI login back to its
-  credential file; persist refreshed saved profiles to their OS-keyring entries.
+* Refresh ownership: Burnrate never calls Anthropic's OAuth refresh endpoint and never writes this
+  file. When `expiresAt` is expired, run `claude auth status` with the matching
+  `CLAUDE_CONFIG_DIR`, single-flight per credential source, then reread the credential file. Claude
+  Code owns rotating refresh-token persistence. If the CLI does not produce a valid access token,
+  keep cached quota data stale instead of attempting refresh itself.
 * Response fields: primary `five_hour.utilization` / `five_hour.resets_at`; weekly
   `seven_day.utilization` / `seven_day.resets_at`; optional `limits[]` entries (`kind`, `group`,
   `percent`, `resets_at`, `scope.model.display_name`, `is_active`); optional `extra_usage`.
   `five_hour` maps to `5h`, `seven_day` maps to `Weekly`, and an active weekly scoped limit can be
   added as another labeled window.
-* Fallback chain: OAuth credentials file -> refresh endpoint -> Claude CLI probe (`claude` with
-  `/usage`) -> no-login state. Browser/Claude web cookie fetch is deliberately excluded.
+* Fallback chain: fresh OAuth credential-file read -> `claude auth status` delegation when expired
+  -> fresh credential-file read -> no-login/stale state. Browser/Claude web cookie fetch and direct
+  Burnrate-owned refresh are deliberately excluded.
 
 ## Codex
 
 * Auth source: `C:\\Users\\Big G\\.codex\\auth.json` (`CODEX_HOME` override). OAuth fields are
   `tokens.access_token`, `tokens.refresh_token`, optional `tokens.id_token`, and
   `tokens.account_id`.
-* Usage request: `GET https://chatgpt.com/backend-api/wham/usage` (if a configured base URL does
+* Primary request: `codex app-server` JSON-RPC `account/rateLimits/read`. The CLI owns OAuth token
+  rotation and credential persistence. Response fields are `rateLimits.primary` and `secondary`,
+  `usedPercent`, `resetsAt`, and `planType` (snake-case variants are accepted).
+* Read-only HTTP fallback: `GET https://chatgpt.com/backend-api/wham/usage` (if a configured base URL does
   not contain `/backend-api`, use `GET <base>/api/codex/usage`). Headers:
   `Authorization: Bearer <access_token>`, `User-Agent: CodexBar`, `Accept: application/json`, and
   `ChatGPT-Account-Id: <account_id>` when present.
-* Refresh: `POST https://auth.openai.com/oauth/token`, `Content-Type: application/json`, body
-  `{ "client_id": "app_EMoamEEZ73f0CkXaXp7hrann", "grant_type": "refresh_token",
-  "refresh_token": "<refresh_token>", "scope": "openid profile email" }`. Read
-  `access_token`, optional `refresh_token` and `id_token`; update `last_refresh`. If refresh fails,
-  invoke the CLI fallback instead of logging the token.
+* Refresh ownership: Burnrate never calls the OpenAI OAuth refresh endpoint and never writes
+  `auth.json`. The app-server path owns rotation. A rejected HTTP fallback becomes a stale/error
+  result and is not refreshed by Burnrate.
 * Optional credit request: `GET https://chatgpt.com/backend-api/wham/rate-limit-reset-credits` with
   the bearer, `Accept`, `User-Agent`, `OpenAI-Beta: codex-1`, `originator: Codex Desktop`, and
   `ChatGPT-Account-ID`.
@@ -77,16 +76,16 @@ windows are omitted; a provider error keeps the last successful snapshot and mar
   `additional_rate_limits[].limit_name` and nested `rate_limit`; optional `credits`.
   Primary maps to `5h` when `limit_window_seconds` is five hours, otherwise the provider's current
   primary label; secondary maps to `Weekly`.
-* Fallback chain: OAuth `auth.json` -> OAuth refresh -> `codex app-server` JSON-RPC
-  (`account/read`, then `account/rateLimits/read`) -> NotLoggedIn/error. Never launch the Codex TUI
-  for polling.
+* Fallback chain: `codex app-server` JSON-RPC `account/rateLimits/read` -> fresh `auth.json`
+  read-only HTTP request -> NotLoggedIn/error. Never launch the Codex TUI for polling.
 
 ## Grok
 
 * Auth source: `C:\\Users\\Big G\\.grok\\auth.json` (`GROK_HOME` override). Select a non-empty
   `https://auth.x.ai::...` entry first, then the legacy `https://accounts.x.ai/sign-in` entry.
   Read `key`, `refresh_token`, `expires_at`, `auth_mode`, `email`, `team_id`, `user_id`, and name
-  fields. Grok CLI owns refresh; Burnrate only reads the cached credential.
+  fields. Grok CLI owns refresh; Burnrate rereads the credential before every fallback request and
+  never writes it.
 * Primary CLI request: spawn `grok agent stdio`, send newline-delimited JSON-RPC 2.0
   `initialize` with `protocolVersion: "1"` and `clientCapabilities`, then `x.ai/billing` with an
   empty params object. The current installed `grok 1.0.5` returned `Method not found` for

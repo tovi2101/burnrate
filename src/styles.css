@@ -109,6 +109,7 @@ button:active { transform: scale(.97); }
 .profile-tabs button { flex: 0 0 auto; padding: 5px 8px; border-radius: 6px; color: #fff; font-size: 9px; opacity: .42; }
 .profile-tabs button:hover { opacity: .8; }
 .profile-tabs button.active { color: #ddd6fe; background: rgba(110, 86, 207, .16); opacity: 1; }
+.profile-source-note { margin: -3px 0 10px; color: rgba(255, 255, 255, .42); font-size: 9px; line-height: 1.45; }
 .saved-profiles { gap: 5px; }
 .saved-profile { min-height: 32px; gap: 8px; padding: 4px 7px; border: 1px solid #1f1f23; border-radius: 8px; color: rgba(255, 255, 255, .7); background: #131316; font-size: 9px; }
 .profile-avatar { display: inline-grid; width: 18px; height: 18px; place-items: center; border-radius: 5px; color: #ddd6fe; background: rgba(110, 86, 207, .18); font-size: 8px; font-weight: 700; }

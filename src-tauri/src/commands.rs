@@ -9,6 +9,7 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::time::Duration;
 #[cfg(debug_assertions)]
 use tauri::Manager;
 use tauri::State;
@@ -32,7 +33,11 @@ pub async fn get_snapshots(state: State<'_, AppState>) -> Result<Vec<UsageSnapsh
     let current = state.snapshots.read().await;
     if current.is_empty() {
         drop(current);
-        let fresh = live::merge_live_snapshots(&[], live::fetch_live().await);
+        let refresh_seconds = state.settings.read().await.refresh_seconds;
+        let fresh = live::merge_live_snapshots(
+            &[],
+            live::fetch_live(Duration::from_secs(refresh_seconds)).await,
+        );
         let fresh = if fresh.is_empty() {
             providers::mock_snapshots().await
         } else {
@@ -48,7 +53,11 @@ pub async fn get_snapshots(state: State<'_, AppState>) -> Result<Vec<UsageSnapsh
 #[tauri::command]
 pub async fn refresh_snapshots(state: State<'_, AppState>) -> Result<Vec<UsageSnapshot>, String> {
     let current = state.snapshots.read().await.clone();
-    let fresh = live::merge_live_snapshots(&current, live::fetch_live().await);
+    let refresh_seconds = state.settings.read().await.refresh_seconds;
+    let fresh = live::merge_live_snapshots(
+        &current,
+        live::fetch_live(Duration::from_secs(refresh_seconds)).await,
+    );
     let fresh = if fresh.is_empty() {
         if current.is_empty() {
             providers::mock_snapshots().await

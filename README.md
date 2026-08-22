@@ -42,21 +42,28 @@ On launch Burnrate looks for the provider CLI credential files described in [PRO
 * Cursor: a cursor-agent session or the local Cursor `state.vscdb` auth record
 * OpenCode: CLI auth/API configuration, then its local database fallback
 
-The app requests usage directly from provider endpoints. Credentials are read in memory and refreshed
-only through each provider's documented OAuth flow. The exact request methods, headers, response
-fields, and fallback order are the implementation spec in `PROVIDERS.md`.
+The app prefers each provider CLI's local RPC or authentication command, then reads credentials
+fresh from its configured source for read-only usage requests. The exact request methods, headers,
+response fields, and fallback order are the implementation spec in `PROVIDERS.md`.
 
 Cursor and OpenCode are intentionally shown as a clear login empty state when no CLI credentials are
 present. The exact commands are `cursor-agent login` and `opencode auth login`.
 
 ## Multiple accounts
 
-Use Settings → Profiles → “save current login as profile”. Burnrate snapshots the current CLI
-credential material into the OS keyring under a provider/name-scoped entry, with a small keyring
-index for portable enumeration. Every saved profile is refreshed independently in the background;
-switching from a card is instant, and “All” stacks every saved profile for that provider. It never
-writes credentials to the repository, log, fixture, or quota cache. Deleting a profile removes its
-credential and index entry.
+Use Settings → Profiles → “save credential source label”. Burnrate stores a reference to the CLI
+credential source and its account identity, never a frozen OAuth token. Labels that resolve to the
+same source share one poll; switching from a card is instant, and “All” stacks the configured labels.
+Claude, Codex, and Grok expose one active account per CLI config directory, so multiple labels on
+one directory follow that same active login. Simultaneous accounts require separate CLI config
+directories. Deleting a profile removes only Burnrate's source reference and index entry.
+
+## Safety
+
+Burnrate is a read-only observer: it reads credentials but never modifies your provider login state
+or writes rotated tokens. OAuth refresh is delegated to each provider's own CLI so its credential
+file remains authoritative and the coding agent stays logged in. Credential files are reread before
+every poll, and profile labels that point to the same account are coalesced into one request.
 
 ## Privacy and security
 

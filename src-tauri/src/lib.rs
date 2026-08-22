@@ -232,6 +232,7 @@ fn write_tray_icon_preview(icon: &tauri::image::Image<'_>) -> Result<(), String>
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    profiles::migrate_legacy_profiles();
     let cached = cache::load();
     let loaded_settings = settings::load();
     let start_hidden_in_tray = loaded_settings.start_hidden_in_tray;
