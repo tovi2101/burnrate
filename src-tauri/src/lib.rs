@@ -47,28 +47,52 @@ macro_rules! invoke_handler {
 }
 
 fn tray_icon() -> tauri::image::Image<'static> {
-    let mut rgba = vec![0_u8; 16 * 16 * 4];
-    for y in 0..16 {
-        for x in 0..16 {
-            let index = (y * 16 + x) * 4;
-            let inside = (2..14).contains(&x) && (2..14).contains(&y);
-            rgba[index] = if inside { 25 } else { 0 };
-            rgba[index + 1] = if inside { 24 } else { 0 };
-            rgba[index + 2] = if inside { 28 } else { 0 };
-            rgba[index + 3] = if inside { 255 } else { 0 };
+    let mut rgba = vec![0_u8; 32 * 32 * 4];
+    for y in 0..32 {
+        for x in 0..32 {
+            let index = (y * 32 + x) * 4;
+            let border = (2..30).contains(&x) && (2..30).contains(&y);
+            let inside = (4..28).contains(&x) && (4..28).contains(&y);
+            rgba[index..index + 4].copy_from_slice(if inside {
+                &[16, 17, 21, 255]
+            } else if border {
+                &[242, 244, 248, 255]
+            } else {
+                &[0, 0, 0, 0]
+            });
         }
     }
     for (x, height, color) in [
-        (5, 5, [143, 203, 155]),
-        (8, 8, [230, 170, 84]),
-        (11, 10, [242, 109, 120]),
+        (8, 7, [220, 139, 102]),
+        (12, 11, [143, 203, 155]),
+        (16, 15, [190, 150, 237]),
+        (20, 9, [102, 202, 209]),
+        (24, 13, [242, 109, 120]),
     ] {
-        for y in (14 - height)..14 {
-            let index = (y * 16 + x) * 4;
-            rgba[index..index + 4].copy_from_slice(&[color[0], color[1], color[2], 255]);
+        for y in (25 - height)..25 {
+            let index = (y * 32 + x) * 4;
+            rgba[index..index + 8].copy_from_slice(&[
+                color[0], color[1], color[2], 255, color[0], color[1], color[2], 255,
+            ]);
         }
     }
-    tauri::image::Image::new_owned(rgba, 16, 16)
+    tauri::image::Image::new_owned(rgba, 32, 32)
+}
+
+fn windows_tray_icon() -> (tauri::image::Image<'static>, String) {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("icons")
+        .join("icon.ico");
+    match tauri::image::Image::from_bytes(include_bytes!("../icons/icon.ico")) {
+        Ok(icon) => (icon.to_owned(), path.display().to_string()),
+        Err(error) => {
+            eprintln!(
+                "tray: icon decode failed path={} error={error}",
+                path.display()
+            );
+            (tray_icon(), "generated fallback".into())
+        }
+    }
 }
 
 fn tray_anchor(app: &tauri::AppHandle) -> Option<(i32, i32)> {
@@ -131,9 +155,20 @@ pub fn show_popover(app: &tauri::AppHandle) -> bool {
         eprintln!("tray: no anchor position available");
         false
     };
+    let _ = window.unminimize();
     let _ = window.show();
     let _ = window.set_focus();
     positioned_near_tray
+}
+
+fn show_main_window(app: &tauri::AppHandle) -> bool {
+    let Some(window) = app.get_webview_window("main") else {
+        return false;
+    };
+    let _ = window.unminimize();
+    let shown = window.show().is_ok();
+    let _ = window.set_focus();
+    shown
 }
 
 #[cfg(debug_assertions)]
@@ -163,63 +198,66 @@ fn write_tray_icon_preview(icon: &tauri::image::Image<'_>) -> Result<(), String>
             pixels.extend_from_slice(&source[index..index + 4]);
         }
     }
-    writer.write_image_data(&pixels).map_err(|error| error.to_string())
+    writer
+        .write_image_data(&pixels)
+        .map_err(|error| error.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let cached = cache::load();
     let loaded_settings = settings::load();
-    let lock_path = std::env::temp_dir().join("burnrate-single-instance.lock");
-    let lock = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&lock_path);
-    let Ok(lock) = lock else { return };
-    let lock_file = Arc::new(std::sync::Mutex::new(Some(lock)));
-    let cleanup_lock = Arc::clone(&lock_file);
+    let start_hidden_in_tray = loaded_settings.start_hidden_in_tray;
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_main_window(app);
+        }))
         .manage(AppState {
             snapshots: Arc::new(RwLock::new(cached)),
             settings: Arc::new(RwLock::new(loaded_settings)),
             tray: Arc::new(std::sync::Mutex::new(TrayRegistration::default())),
         })
         .invoke_handler(invoke_handler!())
-        .plugin(
-            tauri::plugin::Builder::<_, ()>::new("lifecycle")
-                .on_event(move |_app, event| {
-                    if matches!(event, tauri::RunEvent::Exit) {
-                        if let Ok(mut file) = cleanup_lock.lock() {
-                            file.take();
-                        }
-                        let _ = std::fs::remove_file(&lock_path);
+        .on_window_event(|window, event| {
+            if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    if let Err(error) = window.hide() {
+                        eprintln!("window: hide on close failed: {error}");
                     }
-                })
-                .build(),
-        )
-        .setup(|app| {
+                }
+            }
+        })
+        .setup(move |app| {
+            if app.get_webview_window("main").is_none() {
+                WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                    .title("Burnrate")
+                    .inner_size(380.0, 560.0)
+                    .resizable(false)
+                    .decorations(true)
+                    .skip_taskbar(false)
+                    .visible(false)
+                    .build()?;
+            }
+            if !start_hidden_in_tray {
+                show_main_window(&app.app_handle());
+            }
             let menu = tauri::menu::MenuBuilder::new(app)
                 .text("open", "Open Burnrate")
                 .separator()
                 .text("quit", "Quit")
                 .build()?;
-            let icon = app
-                .default_window_icon()
-                .map(|icon| icon.clone().to_owned())
-                .unwrap_or_else(tray_icon);
+            let (icon, icon_path) = windows_tray_icon();
             let icon_width = icon.width();
             let icon_height = icon.height();
             #[cfg(debug_assertions)]
             let preview_icon = icon.clone();
-            tauri::tray::TrayIconBuilder::with_id("burnrate")
+            let tray_result = tauri::tray::TrayIconBuilder::with_id("burnrate")
                 .icon(icon)
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "open" => {
-                        if let Some(window) = app.app_handle().get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
+                        show_main_window(&app.app_handle());
                     }
                     "quit" => app.exit(0),
                     _ => {}
@@ -233,27 +271,27 @@ pub fn run() {
                         show_popover(&app.app_handle());
                     }
                 })
-                .build(app)?;
-            let app_state = app.state::<AppState>();
-            if let Ok(mut registration) = app_state.tray.lock() {
-                registration.registered = true;
-                registration.icon_width = icon_width;
-                registration.icon_height = icon_height;
+                .build(app);
+            match tray_result {
+                Ok(_) => {
+                    let app_state = app.state::<AppState>();
+                    if let Ok(mut registration) = app_state.tray.lock() {
+                        registration.registered = true;
+                        registration.icon_width = icon_width;
+                        registration.icon_height = icon_height;
+                    }
+                    eprintln!(
+                        "tray: registered=true icon={icon_path} size={icon_width}x{icon_height}"
+                    );
+                }
+                Err(error) => {
+                    eprintln!(
+                        "tray: registered=false icon={icon_path} size={icon_width}x{icon_height} error={error}"
+                    );
+                }
             }
             #[cfg(debug_assertions)]
             write_tray_icon_preview(&preview_icon).map_err(std::io::Error::other)?;
-            if app.get_webview_window("main").is_none() {
-                let _ =
-                    WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                        .build()?;
-            }
-            #[cfg(debug_assertions)]
-            if std::env::var_os("BURNRATE_SHOW_WINDOW").is_some() {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
-            }
             Ok(())
         })
         .run(tauri::generate_context!())

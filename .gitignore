@@ -11,6 +11,7 @@ dist/
 *.local.*
 debug/
 .burnrate/
+.grok/
 .DS_Store
 Thumbs.db
 .tauri/

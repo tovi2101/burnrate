@@ -3,6 +3,7 @@ use crate::live;
 use crate::models::*;
 use crate::profiles;
 use crate::providers;
+use crate::settings;
 use serde::Serialize;
 #[cfg(debug_assertions)]
 use std::collections::BTreeMap;
@@ -12,7 +13,6 @@ use std::sync::Mutex;
 use tauri::Manager;
 use tauri::State;
 use tokio::sync::RwLock;
-use crate::settings;
 
 pub struct AppState {
     pub snapshots: Arc<RwLock<Vec<UsageSnapshot>>>,
@@ -90,9 +90,7 @@ pub struct DebugTrayState {
 
 #[cfg(debug_assertions)]
 #[tauri::command]
-pub async fn debug_tray_state(
-    state: State<'_, AppState>,
-) -> Result<DebugTrayState, String> {
+pub async fn debug_tray_state(state: State<'_, AppState>) -> Result<DebugTrayState, String> {
     let registration = state
         .tray
         .lock()
@@ -102,8 +100,16 @@ pub async fn debug_tray_state(
     let mut bars = BTreeMap::new();
     for snapshot in snapshots.iter() {
         bars.insert(
-            format!("{}:{}", snapshot.provider.to_string(), snapshot.profile_name),
-            snapshot.windows.iter().map(|window| window.used_pct).collect(),
+            format!(
+                "{}:{}",
+                snapshot.provider.to_string(),
+                snapshot.profile_name
+            ),
+            snapshot
+                .windows
+                .iter()
+                .map(|window| window.used_pct)
+                .collect(),
         );
     }
     let result = DebugTrayState {
@@ -135,9 +141,7 @@ pub fn debug_simulate_tray_click(app: tauri::AppHandle) -> Result<DebugTrayClick
         .get_webview_window("main")
         .ok_or_else(|| "main window is unavailable".to_string())?;
     let size = window.outer_size().map_err(|error| error.to_string())?;
-    let position = window
-        .outer_position()
-        .map_err(|error| error.to_string())?;
+    let position = window.outer_position().map_err(|error| error.to_string())?;
     let result = DebugTrayClick {
         visible: window.is_visible().unwrap_or(false),
         width: size.width,

@@ -28,7 +28,8 @@ fn rejected_endpoint() -> String {
         };
         let mut request = [0_u8; 1024];
         let _ = stream.read(&mut request);
-        let response = b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+        let response =
+            b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
         let _ = stream.write_all(response);
     });
     format!("http://{address}/usage")
@@ -64,7 +65,10 @@ fn opencode_fixture_maps_to_rolling_and_weekly_windows() {
 async fn manual_cookie_roundtrip_rejected_credentials_are_clean_errors() {
     let cursor_cookie = "burnrate-test-cursor-dummy";
     profiles::save_manual(&ProviderId::Cursor, cursor_cookie).expect("save Cursor dummy");
-    assert_eq!(profiles::manual_value(&ProviderId::Cursor).as_deref(), Some(cursor_cookie));
+    assert_eq!(
+        profiles::manual_value(&ProviderId::Cursor).as_deref(),
+        Some(cursor_cookie)
+    );
     let client = Client::builder()
         .no_proxy()
         .build()
@@ -81,7 +85,10 @@ async fn manual_cookie_roundtrip_rejected_credentials_are_clean_errors() {
 
     let opencode_cookie = "burnrate-test-opencode-dummy";
     profiles::save_manual(&ProviderId::Opencode, opencode_cookie).expect("save OpenCode dummy");
-    assert_eq!(profiles::manual_value(&ProviderId::Opencode).as_deref(), Some(opencode_cookie));
+    assert_eq!(
+        profiles::manual_value(&ProviderId::Opencode).as_deref(),
+        Some(opencode_cookie)
+    );
     let opencode_result = fetch_opencode_with_credentials(
         "Personal",
         &client,

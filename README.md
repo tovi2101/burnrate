@@ -9,6 +9,8 @@ Tailwind frontend. There is no account server, telemetry, analytics, or Electron
 ### Windows
 
 Download the latest Windows installer from Releases and launch Burnrate from the Start menu.
+The installer is currently unsigned, so Windows SmartScreen may appear; click **More info**, then
+**Run anyway** to continue.
 For development, install Node.js, Rust, and the [Tauri v2 Windows prerequisites](https://v2.tauri.app/start/prerequisites/), then:
 
 ```bash

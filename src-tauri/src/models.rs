@@ -3,10 +3,15 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     pub enabled: BTreeMap<String, bool>,
+    #[serde(alias = "refresh_seconds")]
     pub refresh_seconds: u64,
+    #[serde(alias = "launch_at_login")]
     pub launch_at_login: bool,
+    #[serde(default, alias = "start_hidden_in_tray")]
+    pub start_hidden_in_tray: bool,
     pub theme: String,
 }
 
@@ -22,6 +27,7 @@ impl Default for AppSettings {
             ]),
             refresh_seconds: 60,
             launch_at_login: false,
+            start_hidden_in_tray: false,
             theme: "dark".into(),
         }
     }

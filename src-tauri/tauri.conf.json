@@ -7,9 +7,20 @@
   "app": {
     "withGlobalTauri": false,
     "windows": [
-      { "label": "main", "title": "Burnrate", "width": 380, "height": 560, "resizable": false, "decorations": false, "transparent": true, "visible": false, "skipTaskbar": true }
+      { "label": "main", "title": "Burnrate", "width": 380, "height": 560, "resizable": false, "center": true, "decorations": true, "transparent": false, "visible": false, "skipTaskbar": false }
     ],
     "security": { "csp": "default-src 'self'; connect-src 'self' https://api.anthropic.com https://platform.claude.com https://chatgpt.com https://auth.openai.com https://cli-chat-proxy.grok.com https://cursor.com https://opencode.ai" }
   },
-  "bundle": { "active": true, "targets": "all", "icon": ["icons/icon.ico"] }
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": ["icons/icon.ico"],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "startMenuFolder": "Burnrate",
+        "installerHooks": "./windows/installer-hooks.nsh"
+      }
+    }
+  }
 }

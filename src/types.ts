@@ -30,5 +30,6 @@ export interface AppSettings {
   enabled: Record<ProviderId, boolean>;
   refreshSeconds: number;
   launchAtLogin: boolean;
+  startHiddenInTray: boolean;
   theme: "dark" | "light" | "system";
 }
