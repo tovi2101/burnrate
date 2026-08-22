@@ -5,6 +5,7 @@ mod live;
 mod models;
 mod profiles;
 mod providers;
+mod settings;
 
 use commands::AppState;
 use std::sync::Arc;
@@ -39,6 +40,7 @@ fn tray_icon() -> tauri::image::Image<'static> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let cached = cache::load();
+    let loaded_settings = settings::load();
     let lock_path = std::env::temp_dir().join("burnrate-single-instance.lock");
     let lock = std::fs::OpenOptions::new()
         .write(true)
@@ -50,11 +52,13 @@ pub fn run() {
     tauri::Builder::default()
         .manage(AppState {
             snapshots: Arc::new(RwLock::new(cached)),
+            settings: Arc::new(RwLock::new(loaded_settings)),
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_snapshots,
             commands::refresh_snapshots,
             commands::get_settings,
+            commands::save_settings,
             commands::save_profile,
             commands::delete_profile,
             commands::list_profiles,
@@ -112,6 +116,13 @@ pub fn run() {
                 let _ =
                     WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                         .build()?;
+            }
+            #[cfg(debug_assertions)]
+            if std::env::var_os("BURNRATE_SHOW_WINDOW").is_some() {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
             }
             Ok(())
         })

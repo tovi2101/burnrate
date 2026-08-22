@@ -1,5 +1,31 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppSettings {
+    pub enabled: BTreeMap<String, bool>,
+    pub refresh_seconds: u64,
+    pub launch_at_login: bool,
+    pub theme: String,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            enabled: BTreeMap::from([
+                ("claude".into(), true),
+                ("codex".into(), true),
+                ("grok".into(), true),
+                ("cursor".into(), true),
+                ("opencode".into(), true),
+            ]),
+            refresh_seconds: 60,
+            launch_at_login: false,
+            theme: "dark".into(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]

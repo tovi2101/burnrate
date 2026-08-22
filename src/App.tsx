@@ -153,6 +153,16 @@ export default function App() {
   useEffect(() => { document.documentElement.dataset.theme = settings.theme; }, [settings.theme]);
   useEffect(() => {
     let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void invoke<AppSettings>("get_settings").then((loaded) => {
+        console.info("settings: frontend after mount", loaded);
+        if (!cancelled) setSettings(loaded);
+      }).catch((error) => console.warn("settings: load failed", error));
+    }, 0);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, []);
+  useEffect(() => {
+    let cancelled = false;
     Promise.all(PROVIDERS.map(async (provider) => {
       const result = await invoke<string[]>("list_profiles", { provider: provider.id }).catch(() => profiles[provider.id] || ["Personal"]);
       return [provider.id, result.length ? result : ["Personal"]] as const;
@@ -168,7 +178,10 @@ export default function App() {
     if (activeProfiles[provider] === "All" && matches.length > 0) return { ...matches[0], profile_name: "All", windows: matches.flatMap((snapshot) => snapshot.windows) };
     return matches[0];
   };
-  const changeSettings = (next: AppSettings) => setSettings(next);
+  const changeSettings = (next: AppSettings) => {
+    setSettings(next);
+    void invoke("save_settings", { settings: next }).then(() => console.info("settings: save ok")).catch((error) => console.warn("settings: save failed", error));
+  };
   const deleteProfile = (provider: ProviderId, profile: string) => {
     const apply = () => {
       setProfiles((current) => ({ ...current, [provider]: current[provider].filter((item) => item !== profile) }));
