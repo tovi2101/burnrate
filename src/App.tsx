@@ -1,23 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
-  ArrowLeft,
   Check,
   ChevronDown,
-  CircleHelp,
   Clock3,
   ExternalLink,
   Gauge,
-  MoreHorizontal,
   Plus,
   RefreshCw,
   Settings2,
   ShieldCheck,
-  SlidersHorizontal,
-  Sparkles,
   Trash2,
   X,
 } from "lucide-react";
+import { providerIcons } from "./components/icons";
 import { providerById, PROVIDERS } from "./providers";
 import type { AppSettings, ProviderId, SnapshotStatus, UsageSnapshot, UsageWindow } from "./types";
 
@@ -54,8 +50,8 @@ function formatTime(value?: string | null) {
 }
 
 function toneFor(value: number) {
-  if (value > 90) return "critical";
-  if (value > 70) return "warning";
+  if (value >= 90) return "critical";
+  if (value >= 70) return "warning";
   return "normal";
 }
 
@@ -76,20 +72,24 @@ function useMockSnapshots() {
   return { snapshots, setSnapshots, refreshing, refresh };
 }
 
-function MiniBars({ snapshot }: { snapshot?: UsageSnapshot }) {
-  const windows = snapshot?.windows ?? [];
-  const value = Math.max(...windows.map((window) => window.used_pct), 0);
-  const tone = toneFor(value);
-  return <div className="mini-bars" aria-label={`${value}% used`}><i className={tone} style={{ height: `${Math.max(4, Math.min(16, value / 6))}px` }} /><i className={tone} style={{ height: `${Math.max(4, Math.min(16, value / 5))}px` }} /><i className={tone} style={{ height: `${Math.max(4, Math.min(16, value / 4))}px` }} /></div>;
+function ProviderMark({ providerId, muted = false }: { providerId: ProviderId; muted?: boolean }) {
+  const provider = providerById(providerId);
+  const Icon = providerIcons[providerId];
+  return <span className={`provider-glyph ${muted ? "is-muted" : ""}`} style={{ color: provider.accent }}><Icon /></span>;
 }
 
-function UsageBar({ window, accent }: { window: UsageWindow; accent: string }) {
-  const tone = toneFor(window.used_pct);
-  const fill = tone === "critical" ? "#F26D78" : tone === "warning" ? "#E6AA54" : accent;
+function UsageBar({ window: usageWindow, accent }: { window: UsageWindow; accent: string }) {
+  const [canAnimate, setCanAnimate] = useState(false);
+  useEffect(() => {
+    const frame = globalThis.requestAnimationFrame(() => setCanAnimate(true));
+    return () => globalThis.cancelAnimationFrame(frame);
+  }, []);
+  const tone = toneFor(usageWindow.used_pct);
+  const fill = tone === "critical" ? "#EF4444" : tone === "warning" ? "#F59E0B" : accent;
   return <div className="usage-row">
-    <div className="usage-label"><span>{window.label}</span><span className={`usage-number ${tone}`}>{Math.round(window.used_pct)}%</span></div>
-    <div className="usage-track"><div className="usage-fill" style={{ width: `${Math.min(100, Math.max(0, window.used_pct))}%`, background: fill }} /></div>
-    <div className="usage-meta"><span><Clock3 size={12} /> resets in {formatCountdown(window.resets_at)}</span><span>{formatTime(window.resets_at)}</span></div>
+    <div className="usage-label"><span>{usageWindow.label}</span><span className={`usage-number ${tone}`}>{Math.round(usageWindow.used_pct)}%</span></div>
+    <div className="usage-track"><div className={`usage-fill ${canAnimate ? "can-animate" : ""}`} style={{ width: `${Math.min(100, Math.max(0, usageWindow.used_pct))}%`, background: fill }} /></div>
+    <div className="usage-meta"><span><Clock3 size={12} /> resets in {formatCountdown(usageWindow.resets_at)}</span><span>{formatTime(usageWindow.resets_at)}</span></div>
   </div>;
 }
 
@@ -105,7 +105,7 @@ function ProfilePicker({ profile, profiles, onChange }: { profile: string; profi
   const [open, setOpen] = useState(false);
   const options = ["All", ...profiles, profile].filter((item, index, list) => list.indexOf(item) === index);
   return <div className="profile-picker">
-    <button className="profile-button" onClick={() => setOpen(!open)} aria-expanded={open}><span className="profile-avatar">{profile.slice(0, 1)}</span><span>{profile}</span><ChevronDown size={13} /></button>
+    <button className="profile-button" onClick={() => setOpen(!open)} aria-expanded={open}><span>{profile}</span><ChevronDown size={12} /></button>
     {open && <>
       <button className="menu-scrim" aria-label="Close profile menu" onClick={() => setOpen(false)} />
       <div className="profile-menu">{options.map((option) => <button key={option} className={option === profile ? "selected" : ""} onClick={() => { onChange(option); setOpen(false); }}><span>{option}</span>{option === profile && <Check size={14} />}</button>)}<div className="menu-divider" /><button className="menu-action" onClick={() => setOpen(false)}><Plus size={14} /> save current login</button></div>
@@ -116,13 +116,12 @@ function ProfilePicker({ profile, profiles, onChange }: { profile: string; profi
 function ProviderCard({ providerId, snapshot, profile, profiles, onProfileChange }: { providerId: ProviderId; snapshot?: UsageSnapshot; profile: string; profiles: string[]; onProfileChange: (value: string) => void }) {
   const provider = providerById(providerId);
   if (!snapshot) return <section className="provider-card empty-card" style={{ "--accent": provider.accent, "--soft-accent": provider.softAccent } as React.CSSProperties}>
-    <div className="card-top"><div className="provider-heading"><span className="provider-mark">{provider.name.slice(0, 1)}</span><div><h2>{provider.name}</h2><p>Not connected</p></div></div><MoreHorizontal size={17} className="muted-icon" /></div>
-    <div className="empty-body"><div className="empty-icon"><SlidersHorizontal size={18} /></div><p>Sign in to see your live limits.</p><code>{provider.command}</code><button className="login-link">How detection works <ExternalLink size={12} /></button></div>
+    <div className="card-top"><div className="provider-heading"><ProviderMark providerId={providerId} muted /><div className="provider-copy"><h2>{provider.name}</h2><p>Not connected</p></div></div>{profiles.length > 1 && <ProfilePicker profile={profile} profiles={profiles} onChange={onProfileChange} />}</div>
+    <div className="empty-body"><p>Sign in to see your live limits.</p><code>{provider.command}</code><button className="login-link">How detection works <ExternalLink size={12} /></button></div>
   </section>;
   const status: SnapshotStatus = snapshot.status;
   return <section className={`provider-card ${status !== "fresh" ? "is-stale" : ""}`} style={{ "--accent": provider.accent, "--soft-accent": provider.softAccent } as React.CSSProperties}>
-    <div className="card-top"><div className="provider-heading"><span className="provider-mark">{provider.name.slice(0, 1)}</span><div><div className="title-line"><h2>{provider.name}</h2>{status === "fresh" ? <span className="fresh-pill">LIVE</span> : <span className="stale-pill">STALE SINCE {formatTime(snapshot.fetched_at)}</span>}</div><p>{snapshot.plan_name || "Usage"}</p></div></div><MoreHorizontal size={17} className="muted-icon" /></div>
-    <div className="card-controls"><ProfilePicker profile={profile} profiles={profiles} onChange={onProfileChange} /><span className="card-updated">updated {formatTime(snapshot.fetched_at)}</span></div>
+    <div className="card-top"><div className="provider-heading"><ProviderMark providerId={providerId} /><div className="provider-copy"><div className="title-line"><h2>{provider.name}</h2>{status === "fresh" ? <span className="fresh-pill">LIVE</span> : <span className="stale-pill">STALE SINCE {formatTime(snapshot.fetched_at)}</span>}</div><p>{snapshot.plan_name || "Usage"}</p></div></div>{profiles.length > 1 && <ProfilePicker profile={profile} profiles={profiles} onChange={onProfileChange} />}</div>
     <div className="usage-list">{snapshot.windows.map((window) => <UsageBar key={window.label} window={window} accent={provider.accent} />)}</div>
     <BurnRate snapshot={snapshot} />
   </section>;
@@ -135,11 +134,12 @@ function Settings({ settings, onSettingsChange, profiles, onDelete, onSave, onSa
   const [manualProvider, setManualProvider] = useState<ProviderId>("cursor");
   const [manualValue, setManualValue] = useState("");
   const [manualSaved, setManualSaved] = useState(false);
+  const hiddenLocation = /Macintosh|Mac OS X/.test(navigator.userAgent) ? "menu bar" : "tray";
   return <div className="settings-view"><div className="settings-heading"><div><span className="eyebrow">PREFERENCES</span><h1>Settings</h1><p>Keep Burnrate quiet, local, and useful.</p></div></div>
-    <div className="settings-section"><div className="section-title"><div><h3>Providers</h3><p>Choose what appears in your popover.</p></div><Gauge size={17} /></div><div className="settings-list">{PROVIDERS.map((provider) => <div className="setting-row" key={provider.id}><span className="setting-provider-dot" style={{ background: provider.accent }} /><div className="setting-copy"><strong>{provider.name}</strong><span>{provider.id === "cursor" || provider.id === "opencode" ? "Not detected" : "Auto detected"}</span></div><button className={`toggle ${settings.enabled[provider.id] ? "on" : ""}`} onClick={() => onSettingsChange({ ...settings, enabled: { ...settings.enabled, [provider.id]: !settings.enabled[provider.id] } })} aria-label={`Toggle ${provider.name}`}><span /></button></div>)}</div></div>
+    <div className="settings-section"><div className="section-title"><div><h3>Providers</h3><p>Choose what appears in your popover.</p></div><Gauge size={17} /></div><div className="settings-list">{PROVIDERS.map((provider) => <div className="setting-row" key={provider.id}><ProviderMark providerId={provider.id} muted={!settings.enabled[provider.id]} /><div className="setting-copy"><strong>{provider.name}</strong><span>{provider.id === "cursor" || provider.id === "opencode" ? "Not detected" : "Auto detected"}</span></div><button className={`toggle ${settings.enabled[provider.id] ? "on" : ""}`} onClick={() => onSettingsChange({ ...settings, enabled: { ...settings.enabled, [provider.id]: !settings.enabled[provider.id] } })} aria-label={`Toggle ${provider.name}`}><span /></button></div>)}</div></div>
     <div className="settings-section"><div className="section-title"><div><h3>Profiles</h3><p>Credentials stay in your OS keyring.</p></div><ShieldCheck size={17} /></div><div className="profile-tabs">{PROVIDERS.map((provider) => <button key={provider.id} className={provider.id === profileProvider ? "active" : ""} onClick={() => setProfileProvider(provider.id)}>{provider.name}</button>)}</div><div className="saved-profiles">{(profiles[profileProvider] || []).map((profile) => <div className="saved-profile" key={profile}><span className="profile-avatar">{profile.slice(0, 1)}</span><span>{profile}</span>{profile !== "Personal" && <button aria-label={`Delete ${profile}`} onClick={() => onDelete(profileProvider, profile)}><Trash2 size={14} /></button>} {profile === "Personal" && <span className="current-label">CURRENT</span>}</div>)}{adding ? <div className="profile-add-row"><input autoFocus value={profileName} onChange={(event) => setProfileName(event.target.value)} placeholder="e.g. Work" maxLength={48} /><button className="save-small" disabled={!profileName.trim()} onClick={() => { onSave(profileProvider, profileName.trim()); setProfileName(""); setAdding(false); }}><Check size={13} /></button><button className="cancel-small" onClick={() => setAdding(false)}><X size={13} /></button></div> : <button className="outline-button" onClick={() => setAdding(true)}><Plus size={15} /> save current login as profile</button>}</div></div>
     <div className="settings-section"><div className="section-title"><div><h3>Manual web fallback</h3><p>Stored in the OS keyring; never extracted from a browser.</p></div><ShieldCheck size={17} /></div><div className="profile-tabs">{(["cursor", "opencode"] as ProviderId[]).map((provider) => <button key={provider} className={provider === manualProvider ? "active" : ""} onClick={() => { setManualProvider(provider); setManualSaved(false); }}>{providerById(provider).name}</button>)}</div><div className="manual-entry"><input type="password" value={manualValue} onChange={(event) => { setManualValue(event.target.value); setManualSaved(false); }} placeholder={manualProvider === "cursor" ? "Paste Cookie header" : "Paste API key or Cookie header"} autoComplete="off" /><button className="save-small" disabled={!manualValue.trim()} onClick={() => { onSaveManual(manualProvider, manualValue.trim()); setManualValue(""); setManualSaved(true); }}><Check size={13} /></button></div>{manualSaved && <span className="manual-saved">Saved locally</span>}</div>
-    <div className="settings-section compact-section"><div className="setting-row"><div className="setting-copy"><strong>Refresh interval</strong><span>Poll providers in the background</span></div><div className="segmented">{[30, 60, 300].map((seconds) => <button key={seconds} className={settings.refreshSeconds === seconds ? "active" : ""} onClick={() => onSettingsChange({ ...settings, refreshSeconds: seconds })}>{seconds < 60 ? `${seconds}s` : `${seconds / 60}m`}</button>)}</div></div><div className="setting-row"><div className="setting-copy"><strong>Launch at login</strong><span>Open Burnrate when you sign in</span></div><button className={`toggle ${settings.launchAtLogin ? "on" : ""}`} onClick={() => onSettingsChange({ ...settings, launchAtLogin: !settings.launchAtLogin })}><span /></button></div><div className="setting-row"><div className="setting-copy"><strong>Start hidden in tray</strong><span>Hide the window on future launches</span></div><button className={`toggle ${settings.startHiddenInTray ? "on" : ""}`} onClick={() => onSettingsChange({ ...settings, startHiddenInTray: !settings.startHiddenInTray })} aria-label="Start hidden in tray"><span /></button></div><div className="setting-row"><div className="setting-copy"><strong>Theme</strong><span>Dark is easy on the eyes</span></div><div className="segmented">{["dark", "light", "system"].map((theme) => <button key={theme} className={settings.theme === theme ? "active" : ""} onClick={() => onSettingsChange({ ...settings, theme: theme as AppSettings["theme"] })}>{theme}</button>)}</div></div></div>
+    <div className="settings-section compact-section"><div className="setting-row"><div className="setting-copy"><strong>Refresh interval</strong><span>Poll providers in the background</span></div><div className="segmented">{[30, 60, 300].map((seconds) => <button key={seconds} className={settings.refreshSeconds === seconds ? "active" : ""} onClick={() => onSettingsChange({ ...settings, refreshSeconds: seconds })}>{seconds < 60 ? `${seconds}s` : `${seconds / 60}m`}</button>)}</div></div><div className="setting-row"><div className="setting-copy"><strong>Launch at login</strong><span>Open Burnrate when you sign in</span></div><button className={`toggle ${settings.launchAtLogin ? "on" : ""}`} onClick={() => onSettingsChange({ ...settings, launchAtLogin: !settings.launchAtLogin })}><span /></button></div><div className="setting-row"><div className="setting-copy"><strong>Start hidden in {hiddenLocation}</strong><span>Hide the window on future launches</span></div><button className={`toggle ${settings.startHiddenInTray ? "on" : ""}`} onClick={() => onSettingsChange({ ...settings, startHiddenInTray: !settings.startHiddenInTray })} aria-label={`Start hidden in ${hiddenLocation}`}><span /></button></div><div className="setting-row"><div className="setting-copy"><strong>Theme</strong><span>Dark is easy on the eyes</span></div><div className="segmented">{["dark", "light", "system"].map((theme) => <button key={theme} className={settings.theme === theme ? "active" : ""} onClick={() => onSettingsChange({ ...settings, theme: theme as AppSettings["theme"] })}>{theme}</button>)}</div></div></div>
     <div className="privacy-note"><ShieldCheck size={15} /><span><strong>Everything stays local.</strong> Burnrate talks only to provider endpoints. No telemetry, no analytics, no browser cookie extraction.</span></div>
   </div>;
 }
@@ -205,7 +205,7 @@ export default function App() {
   const saveManual = (provider: ProviderId, value: string) => {
     void invoke("save_manual_credential", { provider, value }).catch(() => undefined);
   };
-  return <main className="app-shell"><header className="app-header"><div className="brand"><span className="brand-glyph"><Sparkles size={14} /></span><span>Burnrate</span></div><div className="header-actions"><div className="tray-status"><span className="status-dot" />{snapshots.length ? "All systems normal" : "Waiting for logins"}</div><button className="icon-button" onClick={() => void refresh()} aria-label="Refresh" data-refreshing={refreshing}><RefreshCw size={16} /></button><button className="icon-button" onClick={() => setView(view === "settings" ? "overview" : "settings")} aria-label="Settings">{view === "settings" ? <X size={17} /> : <Settings2 size={17} />}</button></div></header>
-    {view === "overview" ? <><div className="hero"><div><span className="eyebrow">TODAY · {new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" }).format(new Date())}</span><h1>Usage at a glance<span className="cursor-blink">_</span></h1><p>Five providers. One calm little window.</p></div><div className="hero-meter"><div className="meter-ring"><span>{Math.round(snapshots.length ? snapshots.reduce((sum, snapshot) => sum + Math.max(...snapshot.windows.map((window) => window.used_pct), 0), 0) / snapshots.length : 0)}%</span></div><span>avg. used</span></div></div><div className="provider-rail">{visibleProviders.map((provider) => <div className="rail-item" key={provider.id}><span className="rail-label"><span className="rail-dot" style={{ background: provider.accent }} />{provider.name}</span><MiniBars snapshot={snapshotFor(provider.id)} /></div>)}</div><div className="cards">{visibleProviders.map((provider) => <ProviderCard key={provider.id} providerId={provider.id} snapshot={snapshotFor(provider.id)} profile={activeProfiles[provider.id]} profiles={profiles[provider.id] || ["Personal"]} onProfileChange={(profile) => setActiveProfiles((current) => ({ ...current, [provider.id]: profile }))} />)}</div><footer className="app-footer"><span><span className="footer-pulse" /> Last checked {formatTime(new Date().toISOString())}</span><button onClick={() => setView("settings")}><SlidersHorizontal size={13} /> customize</button></footer></> : <Settings settings={settings} onSettingsChange={changeSettings} profiles={profiles} onDelete={deleteProfile} onSave={saveProfile} onSaveManual={saveManual} />}
+  return <main className="app-shell"><header className="app-header"><div className="brand"><span>Burnrate</span></div><div className="header-actions"><button className="icon-button" onClick={() => void refresh()} aria-label="Refresh" data-refreshing={refreshing}><RefreshCw size={15} /></button><button className={`icon-button ${view === "settings" ? "is-active" : ""}`} onClick={() => setView(view === "settings" ? "overview" : "settings")} aria-label="Settings"><Settings2 size={15} /></button></div></header>
+    {view === "overview" ? <><div className="overview-meta"><span>LIVE USAGE</span><span>Updated {formatTime(new Date().toISOString())}</span></div><div className="cards">{visibleProviders.map((provider) => <ProviderCard key={provider.id} providerId={provider.id} snapshot={snapshotFor(provider.id)} profile={activeProfiles[provider.id]} profiles={profiles[provider.id] || ["Personal"]} onProfileChange={(profile) => setActiveProfiles((current) => ({ ...current, [provider.id]: profile }))} />)}</div></> : <Settings settings={settings} onSettingsChange={changeSettings} profiles={profiles} onDelete={deleteProfile} onSave={saveProfile} onSaveManual={saveManual} />}
     </main>;
 }

@@ -76,6 +76,41 @@ def render(size: int) -> bytes:
     return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(bytes(rows), 9)) + chunk(b"IEND", b"")
 
 
+def render_template(size: int) -> bytes:
+    high = size * SUPERSAMPLE
+    pixels = [0] * (high * high)
+    scale = size / 18
+    for y in range(high):
+        py = (y + 0.5) / SUPERSAMPLE
+        for x in range(high):
+            px = (x + 0.5) / SUPERSAMPLE
+            outer = inside_rounded_rect(px, py, 1 * scale, 1 * scale, size - scale, size - scale, 3.2 * scale)
+            inner = inside_rounded_rect(px, py, 2.15 * scale, 2.15 * scale, size - 2.15 * scale, size - 2.15 * scale, 2.2 * scale)
+            if outer and not inner:
+                pixels[y * high + x] = 255
+    centers = (4.7, 6.85, 9, 11.15, 13.3)
+    heights = (4, 6.2, 8.4, 5.2, 7.2)
+    for center, height in zip(centers, heights):
+        left, right = (center - .65) * scale, (center + .65) * scale
+        top, bottom = (14 - height) * scale, 14 * scale
+        for y in range(high):
+            py = (y + 0.5) / SUPERSAMPLE
+            if not top <= py < bottom:
+                continue
+            for x in range(high):
+                px = (x + 0.5) / SUPERSAMPLE
+                if left <= px < right:
+                    pixels[y * high + x] = 255
+    rows = bytearray()
+    for y in range(size):
+        rows.append(0)
+        for x in range(size):
+            alpha = sum(pixels[(y * SUPERSAMPLE + sy) * high + x * SUPERSAMPLE + sx] for sy in range(SUPERSAMPLE) for sx in range(SUPERSAMPLE)) // (SUPERSAMPLE ** 2)
+            rows.extend((0, 0, 0, alpha))
+    header = struct.pack(">IIBBBBB", size, size, 8, 6, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(bytes(rows), 9)) + chunk(b"IEND", b"")
+
+
 def main() -> None:
     frames = [(size, render(size)) for size in SIZES]
     offset = 6 + 16 * len(frames)
@@ -87,7 +122,12 @@ def main() -> None:
         offset += len(png)
     output = Path(__file__).resolve().parents[1] / "src-tauri" / "icons" / "icon.ico"
     output.write_bytes(directory + payload)
+    template = output.with_name("trayTemplate.png")
+    template_2x = output.with_name("trayTemplate@2x.png")
+    template.write_bytes(render_template(18))
+    template_2x.write_bytes(render_template(36))
     print(f"generated {output} with sizes {', '.join(map(str, SIZES))}")
+    print(f"generated macOS templates {template.name} (18px) and {template_2x.name} (36px)")
 
 
 if __name__ == "__main__":

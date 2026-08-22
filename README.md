@@ -85,6 +85,9 @@ Provider endpoint research is based on [CodexBar by Peter Steinberger](https://g
 MIT licensed. The checked-in `references/` directory is development research only and is excluded
 from published builds.
 
+Provider names and marks are trademarks of their respective owners and are used for identification
+only. Burnrate is not affiliated with or endorsed by any provider.
+
 ## License
 
 MIT. See [LICENSE](./LICENSE).

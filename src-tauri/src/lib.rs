@@ -79,7 +79,8 @@ fn tray_icon() -> tauri::image::Image<'static> {
     tauri::image::Image::new_owned(rgba, 32, 32)
 }
 
-fn windows_tray_icon() -> (tauri::image::Image<'static>, String) {
+#[cfg(not(target_os = "macos"))]
+fn platform_tray_icon() -> (tauri::image::Image<'static>, String) {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("icons")
         .join("icon.ico");
@@ -88,6 +89,23 @@ fn windows_tray_icon() -> (tauri::image::Image<'static>, String) {
         Err(error) => {
             eprintln!(
                 "tray: icon decode failed path={} error={error}",
+                path.display()
+            );
+            (tray_icon(), "generated fallback".into())
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn platform_tray_icon() -> (tauri::image::Image<'static>, String) {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("icons")
+        .join("trayTemplate.png");
+    match tauri::image::Image::from_bytes(include_bytes!("../icons/trayTemplate.png")) {
+        Ok(icon) => (icon.to_owned(), path.display().to_string()),
+        Err(error) => {
+            eprintln!(
+                "tray: template icon decode failed path={} error={error}",
                 path.display()
             );
             (tray_icon(), "generated fallback".into())
@@ -107,12 +125,21 @@ fn tray_anchor(app: &tauri::AppHandle) -> Option<(i32, i32)> {
                         .or_else(|| value.and_then(serde_json::Value::as_u64).map(|n| n as i64))
                         .or_else(|| value.and_then(serde_json::Value::as_f64).map(|n| n as i64))
                 };
-                if let (Some(x), Some(y), Some(height)) = (
+                if let (Some(x), Some(y), Some(width), Some(height)) = (
                     number(position.and_then(|value| value.get("x"))),
                     number(position.and_then(|value| value.get("y"))),
+                    number(size.and_then(|value| value.get("width"))),
                     number(size.and_then(|value| value.get("height"))),
                 ) {
-                    return Some((x as i32, y as i32 + height as i32 + 8));
+                    #[cfg(target_os = "macos")]
+                    return Some((x as i32 + width as i32 - 380, y as i32 + height as i32 + 8));
+                    #[cfg(target_os = "windows")]
+                    return Some((
+                        x as i32 + width as i32 - 380,
+                        y as i32 - 560 - height as i32,
+                    ));
+                    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+                    return Some((x as i32 + width as i32 - 380, y as i32 + height as i32 + 8));
                 }
             }
         }
@@ -176,7 +203,7 @@ fn write_tray_icon_preview(icon: &tauri::image::Image<'_>) -> Result<(), String>
     let output = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("screenshots")
-        .join("verified-tray-icon.png");
+        .join("design-tray.png");
     if let Some(parent) = output.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
@@ -229,6 +256,9 @@ pub fn run() {
             }
         })
         .setup(move |app| {
+            #[cfg(target_os = "macos")]
+            app.handle()
+                .set_activation_policy(tauri::ActivationPolicy::Accessory)?;
             if app.get_webview_window("main").is_none() {
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                     .title("Burnrate")
@@ -247,12 +277,12 @@ pub fn run() {
                 .separator()
                 .text("quit", "Quit")
                 .build()?;
-            let (icon, icon_path) = windows_tray_icon();
+            let (icon, icon_path) = platform_tray_icon();
             let icon_width = icon.width();
             let icon_height = icon.height();
             #[cfg(debug_assertions)]
             let preview_icon = icon.clone();
-            let tray_result = tauri::tray::TrayIconBuilder::with_id("burnrate")
+            let tray_builder = tauri::tray::TrayIconBuilder::with_id("burnrate")
                 .icon(icon)
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id().as_ref() {
@@ -270,8 +300,10 @@ pub fn run() {
                     {
                         show_popover(&app.app_handle());
                     }
-                })
-                .build(app);
+                });
+            #[cfg(target_os = "macos")]
+            let tray_builder = tray_builder.icon_as_template(true);
+            let tray_result = tray_builder.build(app);
             match tray_result {
                 Ok(_) => {
                     let app_state = app.state::<AppState>();
