@@ -156,6 +156,49 @@ fn unix(value: Option<&Value>) -> Option<DateTime<Utc>> {
         .and_then(|raw| Utc.timestamp_opt(raw, 0).single())
 }
 
+pub(crate) fn label_for_duration(seconds: i64) -> &'static str {
+    match seconds {
+        0..=43_200 => "5h",
+        43_201..=1_209_600 => "Weekly",
+        _ => "Monthly",
+    }
+}
+
+fn window_duration_seconds(item: &Value) -> Option<i64> {
+    item.get("limit_window_seconds")
+        .or_else(|| item.get("limitWindowSeconds"))
+        .or_else(|| item.get("window_duration_seconds"))
+        .or_else(|| item.get("windowDurationSeconds"))
+        .and_then(Value::as_i64)
+        .or_else(|| {
+            item.get("windowDurationMins")
+                .or_else(|| item.get("window_duration_mins"))
+                .or_else(|| item.get("window_minutes"))
+                .and_then(Value::as_i64)
+                .map(|minutes| minutes * 60)
+        })
+}
+
+fn label_for_window(item: &Value, reset: Option<DateTime<Utc>>) -> &'static str {
+    if let Some(seconds) = window_duration_seconds(item) {
+        return label_for_duration(seconds);
+    }
+    let seconds_until_reset = reset
+        .map(|value| value.signed_duration_since(Utc::now()).num_seconds().max(0))
+        .unwrap_or_default();
+    label_for_duration(seconds_until_reset)
+}
+
+fn period_duration_seconds(period: &Value) -> Option<i64> {
+    let start = rfc3339(
+        period
+            .get("start")
+            .or_else(|| period.get("billingPeriodStart")),
+    )?;
+    let end = rfc3339(period.get("end").or_else(|| period.get("billingPeriodEnd")))?;
+    Some(end.signed_duration_since(start).num_seconds().max(0))
+}
+
 fn window(label: &str, pct: f64, reset: Option<DateTime<Utc>>) -> UsageWindow {
     UsageWindow {
         label: label.into(),
@@ -179,6 +222,39 @@ fn snapshot(
         fetched_at: Utc::now(),
         status: SnapshotStatus::Fresh,
         error_message: None,
+    }
+}
+
+fn append_codex_windows(limits: &Value, windows: &mut Vec<UsageWindow>) {
+    for keys in [
+        ["primary", "primary_window"],
+        ["secondary", "secondary_window"],
+    ] {
+        let Some(item) = limits.get(keys[0]).or_else(|| limits.get(keys[1])) else {
+            continue;
+        };
+        let pct = item
+            .get("usedPercent")
+            .or_else(|| item.get("used_percent"))
+            .and_then(Value::as_f64);
+        if let Some(pct) = pct {
+            let reset = unix(item.get("resetsAt").or_else(|| item.get("reset_at")));
+            windows.push(window(label_for_window(item, reset), pct, reset));
+        }
+    }
+}
+
+fn append_additional_codex_windows(data: &Value, windows: &mut Vec<UsageWindow>) {
+    let additional = data
+        .get("additionalRateLimits")
+        .or_else(|| data.get("additional_rate_limits"))
+        .and_then(Value::as_array);
+    for entry in additional.into_iter().flatten() {
+        let limits = entry
+            .get("rateLimit")
+            .or_else(|| entry.get("rate_limit"))
+            .unwrap_or(entry);
+        append_codex_windows(limits, windows);
     }
 }
 
@@ -428,12 +504,20 @@ async fn fetch_prepared_claude(
     let mut windows = Vec::new();
     if let Some(five) = data.get("five_hour") {
         if let Some(pct) = five.get("utilization").and_then(Value::as_f64) {
-            windows.push(window("5h", pct, rfc3339(five.get("resets_at"))));
+            windows.push(window(
+                label_for_duration(5 * 60 * 60),
+                pct,
+                rfc3339(five.get("resets_at")),
+            ));
         }
     }
     if let Some(weekly) = data.get("seven_day") {
         if let Some(pct) = weekly.get("utilization").and_then(Value::as_f64) {
-            windows.push(window("Weekly", pct, rfc3339(weekly.get("resets_at"))));
+            windows.push(window(
+                label_for_duration(7 * 24 * 60 * 60),
+                pct,
+                rfc3339(weekly.get("resets_at")),
+            ));
         }
     }
     Ok(snapshot(
@@ -484,13 +568,10 @@ async fn codex(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveErro
         .await
         .map_err(|_| LiveError::Parse)?;
     let mut windows = Vec::new();
-    for (key, label) in [("primary_window", "5h"), ("secondary_window", "Weekly")] {
-        if let Some(item) = data.pointer(&format!("/rate_limit/{key}")) {
-            if let Some(pct) = item.get("used_percent").and_then(Value::as_f64) {
-                windows.push(window(label, pct, unix(item.get("reset_at"))));
-            }
-        }
+    if let Some(limits) = data.get("rate_limit") {
+        append_codex_windows(limits, &mut windows);
     }
+    append_additional_codex_windows(&data, &mut windows);
     Ok(snapshot(
         ProviderId::Codex,
         profile,
@@ -507,21 +588,10 @@ fn parse_codex_rate_limits(profile: &str, data: &Value) -> Result<UsageSnapshot,
         .or_else(|| data.get("rate_limits"))
         .unwrap_or(data);
     let mut windows = Vec::new();
-    for (keys, label) in [
-        (["primary", "primary_window"], "5h"),
-        (["secondary", "secondary_window"], "Weekly"),
-    ] {
-        let Some(item) = limits.get(keys[0]).or_else(|| limits.get(keys[1])) else {
-            continue;
-        };
-        let pct = item
-            .get("usedPercent")
-            .or_else(|| item.get("used_percent"))
-            .and_then(Value::as_f64);
-        if let Some(pct) = pct {
-            let reset = unix(item.get("resetsAt").or_else(|| item.get("reset_at")));
-            windows.push(window(label, pct, reset));
-        }
+    append_codex_windows(limits, &mut windows);
+    append_additional_codex_windows(data, &mut windows);
+    if !std::ptr::eq(limits, data) {
+        append_additional_codex_windows(limits, &mut windows);
     }
     if windows.is_empty() {
         return Err(LiveError::Parse);
@@ -596,12 +666,16 @@ async fn grok(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveError
         } else {
             0.0
         };
-        let reset = rfc3339(data.pointer("/billingCycle/billingPeriodEnd"));
+        let billing_cycle = data.get("billingCycle").unwrap_or(&Value::Null);
+        let reset = rfc3339(billing_cycle.get("billingPeriodEnd"));
+        let label = period_duration_seconds(billing_cycle)
+            .map(label_for_duration)
+            .unwrap_or_else(|| label_for_window(billing_cycle, reset));
         return Ok(snapshot(
             ProviderId::Grok,
             profile,
             Some("SuperGrok".into()),
-            vec![window("Weekly", pct, reset)],
+            vec![window(label, pct, reset)],
         ));
     }
     let body = profile_json(&ProviderId::Grok, profile)?;
@@ -661,13 +735,16 @@ async fn grok(profile: &str, client: &Client) -> Result<UsageSnapshot, LiveError
                 0.0
             }
         });
-    let reset = rfc3339(config.pointer("/currentPeriod/end"))
-        .or_else(|| rfc3339(config.get("billingPeriodEnd")));
+    let period = config.get("currentPeriod").unwrap_or(&Value::Null);
+    let reset = rfc3339(period.get("end")).or_else(|| rfc3339(config.get("billingPeriodEnd")));
+    let label = period_duration_seconds(period)
+        .map(label_for_duration)
+        .unwrap_or_else(|| label_for_window(period, reset));
     Ok(snapshot(
         ProviderId::Grok,
         profile,
         Some("SuperGrok".into()),
-        vec![window("Weekly", pct, reset)],
+        vec![window(label, pct, reset)],
     ))
 }
 
@@ -777,8 +854,11 @@ pub fn parse_opencode_usage_response(
     data: &Value,
 ) -> Result<UsageSnapshot, LiveError> {
     let rolling = data.get("rollingUsage").ok_or(LiveError::Parse)?;
+    let rolling_label = window_duration_seconds(rolling)
+        .map(label_for_duration)
+        .unwrap_or("5h");
     let mut windows = vec![window(
-        "5h",
+        rolling_label,
         rolling
             .get("usagePercent")
             .and_then(Value::as_f64)
@@ -795,13 +875,36 @@ pub fn parse_opencode_usage_response(
     )];
     if let Some(weekly) = data.get("weeklyUsage") {
         if let Some(pct) = weekly.get("usagePercent").and_then(Value::as_f64) {
+            let weekly_label = window_duration_seconds(weekly)
+                .map(label_for_duration)
+                .unwrap_or("Weekly");
             windows.push(window(
-                "Weekly",
+                weekly_label,
                 pct,
                 Some(
                     Utc::now()
                         + chrono::Duration::seconds(
                             weekly
+                                .get("resetInSec")
+                                .and_then(Value::as_i64)
+                                .unwrap_or(0),
+                        ),
+                ),
+            ));
+        }
+    }
+    if let Some(monthly) = data.get("monthlyUsage") {
+        if let Some(pct) = monthly.get("usagePercent").and_then(Value::as_f64) {
+            let monthly_label = window_duration_seconds(monthly)
+                .map(label_for_duration)
+                .unwrap_or("Monthly");
+            windows.push(window(
+                monthly_label,
+                pct,
+                Some(
+                    Utc::now()
+                        + chrono::Duration::seconds(
+                            monthly
                                 .get("resetInSec")
                                 .and_then(Value::as_i64)
                                 .unwrap_or(0),
@@ -896,13 +999,17 @@ pub fn parse_cursor_usage_response(
         })
         .ok_or(LiveError::Parse)?;
     let reset = rfc3339(data.get("billingCycleEnd"));
+    let duration = rfc3339(data.get("billingCycleStart"))
+        .zip(reset)
+        .map(|(start, end)| end.signed_duration_since(start).num_seconds().max(0));
+    let label = duration.map(label_for_duration).unwrap_or("Monthly");
     Ok(snapshot(
         ProviderId::Cursor,
         profile,
         data.get("membershipType")
             .and_then(Value::as_str)
             .map(str::to_owned),
-        vec![window("Monthly", pct, reset)],
+        vec![window(label, pct, reset)],
     ))
 }
 
@@ -1505,5 +1612,31 @@ mod tests {
             1,
             "same-account pollers must share one CLI-owned refresh"
         );
+    }
+
+    #[test]
+    fn codex_window_labels_follow_duration_when_response_order_is_shuffled() {
+        let response = json!({
+            "rateLimits": {
+                "primary": {
+                    "usedPercent": 22.0,
+                    "windowDurationMins": 10_080,
+                    "resetsAt": 1_900_000_000
+                },
+                "secondary": {
+                    "usedPercent": 43.0,
+                    "windowDurationMins": 300,
+                    "resetsAt": 1_900_000_001
+                },
+                "planType": "pro"
+            }
+        });
+        let snapshot = parse_codex_rate_limits("Fixture", &response)
+            .expect("shuffled Codex windows should parse");
+        assert_eq!(snapshot.windows.len(), 2);
+        assert_eq!(snapshot.windows[0].label, "Weekly");
+        assert_eq!(snapshot.windows[0].used_pct, 22.0);
+        assert_eq!(snapshot.windows[1].label, "5h");
+        assert_eq!(snapshot.windows[1].used_pct, 43.0);
     }
 }

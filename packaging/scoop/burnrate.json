@@ -1,16 +1,15 @@
 {
-  "version": "1.0.0",
+  "version": "1.3.0",
   "description": "Local usage limits for AI coding providers",
   "homepage": "https://github.com/tovi2101/burnrate",
   "license": "MIT",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/tovi2101/burnrate/releases/download/v1.0.0/Burnrate_1.0.0_x64-setup.exe",
-      "hash": "faaf87280445e042caf1b816553a73de34590752bfcd2d47270304377568dea6"
+      "url": "https://github.com/tovi2101/burnrate/releases/download/v1.3.0/Burnrate_1.3.0_x64-setup.exe"
     }
   },
   "installer": {
-    "script": "Start-Process -Wait (Join-Path $dir 'Burnrate_1.0.0_x64-setup.exe') -ArgumentList '/S', '/CURRENTUSER'"
+    "script": "Start-Process -Wait (Join-Path $dir 'Burnrate_1.3.0_x64-setup.exe') -ArgumentList '/S', '/CURRENTUSER'"
   },
   "uninstaller": {
     "script": "$uninstaller = Join-Path $env:LOCALAPPDATA 'Burnrate\\uninstall.exe'; if (Test-Path $uninstaller) { Start-Process -Wait $uninstaller -ArgumentList '/S' }"

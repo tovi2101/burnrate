@@ -102,7 +102,15 @@ impl MockProvider {
                 .and_then(|v| v.get("reset_at"))
                 .and_then(Value::as_i64)
                 .and_then(|v| Utc.timestamp_opt(v, 0).single());
-            windows.push(Self::window("5h", value, reset));
+            let duration = primary
+                .and_then(|v| v.get("limit_window_seconds"))
+                .and_then(Value::as_i64)
+                .unwrap_or_default();
+            windows.push(Self::window(
+                super::live::label_for_duration(duration),
+                value,
+                reset,
+            ));
         }
         if let Some(value) = secondary
             .and_then(|v| v.get("used_percent"))
@@ -112,7 +120,46 @@ impl MockProvider {
                 .and_then(|v| v.get("reset_at"))
                 .and_then(Value::as_i64)
                 .and_then(|v| Utc.timestamp_opt(v, 0).single());
-            windows.push(Self::window("Weekly", value, reset));
+            let duration = secondary
+                .and_then(|v| v.get("limit_window_seconds"))
+                .and_then(Value::as_i64)
+                .unwrap_or_default();
+            windows.push(Self::window(
+                super::live::label_for_duration(duration),
+                value,
+                reset,
+            ));
+        }
+        for additional in body
+            .get("additional_rate_limits")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let Some(limits) = additional.get("rate_limit") else {
+                continue;
+            };
+            for key in ["primary_window", "secondary_window"] {
+                let Some(item) = limits.get(key) else {
+                    continue;
+                };
+                let Some(value) = item.get("used_percent").and_then(Value::as_f64) else {
+                    continue;
+                };
+                let reset = item
+                    .get("reset_at")
+                    .and_then(Value::as_i64)
+                    .and_then(|value| Utc.timestamp_opt(value, 0).single());
+                let duration = item
+                    .get("limit_window_seconds")
+                    .and_then(Value::as_i64)
+                    .unwrap_or_default();
+                windows.push(Self::window(
+                    super::live::label_for_duration(duration),
+                    value,
+                    reset,
+                ));
+            }
         }
         let plan = body
             .get("plan_type")

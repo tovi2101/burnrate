@@ -4,9 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Check,
   ChevronDown,
-  Clock3,
   Copy,
-  ExternalLink,
   Gauge,
   Plus,
   RefreshCw,
@@ -21,9 +19,10 @@ import codexLogo from "./assets/brands/codex.svg";
 import cursorLogo from "./assets/brands/cursor.svg";
 import grokLogo from "./assets/brands/grok.svg";
 import opencodeLogo from "./assets/brands/opencode.svg";
-import type { AppSettings, HistoryPayload, HistorySeries, ProviderId, SnapshotStatus, UsageSnapshot, UsageWindow } from "./types";
+import type { AppSettings, HistoryPayload, HistorySeries, ProviderId, UsageSnapshot, UsageWindow } from "./types";
 
-type View = "overview" | "settings";
+type View = "usage" | "settings";
+type UsageTab = "overview" | ProviderId;
 type UsageRange = "now" | "24h" | "7d" | "30d";
 
 const providerLogos: Record<ProviderId, string> = {
@@ -81,9 +80,9 @@ function formatTime(value?: string | null) {
   return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(value));
 }
 
-function toneFor(value: number) {
-  if (value >= 90) return "critical";
-  if (value >= 70) return "warning";
+function urgencyFor(remaining: number) {
+  if (remaining <= 10) return "critical";
+  if (remaining <= 30) return "warning";
   return "normal";
 }
 
@@ -120,13 +119,13 @@ function UsageBar({ window: usageWindow, accent }: { window: UsageWindow; accent
     const frame = globalThis.requestAnimationFrame(() => setCanAnimate(true));
     return () => globalThis.cancelAnimationFrame(frame);
   }, []);
-  const tone = toneFor(usageWindow.used_pct);
-  return <div className="usage-row">
-    <div className="usage-label"><span>{usageWindow.label}</span><span className={`usage-number ${tone}`}>{Math.round(usageWindow.used_pct)}%</span></div>
-    <div className="usage-track"><div className={`usage-fill ${tone} ${canAnimate ? "can-animate" : ""}`} style={{ width: `${Math.min(100, Math.max(0, usageWindow.used_pct))}%`, "--bar-color": accent } as React.CSSProperties} /></div>
-    <div className="usage-meta"><span><Clock3 size={12} /> resets in {formatCountdown(usageWindow.resets_at)}</span><span>{formatTime(usageWindow.resets_at)}</span></div>
-    {usageWindow.pace_limit_minutes != null && <div className="pace"><span className="pace-dot" /> at this pace: limit in <strong>{formatPace(usageWindow.pace_limit_minutes)}</strong></div>}
-  </div>;
+  const remaining = Math.max(0, Math.min(100, 100 - usageWindow.used_pct));
+  const urgency = urgencyFor(remaining);
+  return <section className="window-block" style={{ "--provider-accent": accent } as React.CSSProperties}>
+    <div className="window-headline"><div><i className={`urgency-dot ${urgency}`} /><strong>{usageWindow.label} · <span className={urgency}>{Math.round(remaining)}% left</span></strong></div><span>Resets in {formatCountdown(usageWindow.resets_at)}</span></div>
+    <div className="window-track"><div className={`window-fill ${canAnimate ? "can-animate" : ""}`} style={{ width: `${remaining}%` }} /></div>
+    {usageWindow.pace_limit_minutes != null && <p className="window-pace">At this pace: runs out in {formatPace(usageWindow.pace_limit_minutes)}</p>}
+  </section>;
 }
 
 function ProfilePicker({ profile, profiles, onChange, onAddAccount }: { profile: string; profiles: string[]; onChange: (value: string) => void; onAddAccount: () => void }) {
@@ -141,21 +140,50 @@ function ProfilePicker({ profile, profiles, onChange, onAddAccount }: { profile:
   </div>;
 }
 
-function ProviderCard({ providerId, snapshots, profile, profiles, onProfileChange, onAddAccount }: { providerId: ProviderId; snapshots: UsageSnapshot[]; profile: string; profiles: string[]; onProfileChange: (value: string) => void; onAddAccount: () => void }) {
+function OverviewRow({ providerId, snapshots, onOpen }: { providerId: ProviderId; snapshots: UsageSnapshot[]; onOpen: () => void }) {
   const provider = providerById(providerId);
   const snapshot = snapshots[0];
-  const profileControl = profiles.length > 1
-    ? <ProfilePicker profile={profile} profiles={profiles} onChange={onProfileChange} onAddAccount={onAddAccount} />
-    : <button className="add-account-button" onClick={onAddAccount} aria-label={`Add ${provider.name} account`}><Plus size={14} /></button>;
-  if (!snapshot) return <section className="provider-card empty-card" style={{ "--accent": provider.accent, "--soft-accent": provider.softAccent } as React.CSSProperties}>
-    <div className="card-top"><div className="provider-heading"><ProviderMark providerId={providerId} muted /><div className="provider-copy"><h2>{provider.name}</h2><p>Not connected</p></div></div>{profileControl}</div>
-    <div className="empty-body"><p>Sign in to see your live limits.</p><code>{provider.command}</code><button className="login-link">How detection works <ExternalLink size={12} /></button></div>
-  </section>;
-  const status: SnapshotStatus = snapshot.status;
-  return <section className={`provider-card ${status !== "fresh" ? "is-stale" : ""}`} style={{ "--accent": provider.accent, "--soft-accent": provider.softAccent } as React.CSSProperties}>
-    <div className="card-top"><div className="provider-heading"><ProviderMark providerId={providerId} /><div className="provider-copy"><div className="title-line"><h2>{provider.name}</h2>{status === "fresh" ? <span className="fresh-pill">LIVE</span> : <span className="stale-pill">STALE SINCE {formatTime(snapshot.fetched_at)}</span>}</div><p>{profile === "All" ? `${snapshots.length} accounts` : snapshot.plan_name || "Usage"}</p></div></div>{profileControl}</div>
-    {profile === "All" ? <div className="all-profiles">{snapshots.map((item) => <div className="all-profile" key={item.profile_name}><div className="all-profile-name">{item.profile_name}</div><div className="usage-list">{item.windows.map((window) => <UsageBar key={`${item.profile_name}-${window.label}`} window={window} accent={provider.accent} />)}</div>{item.error_message && <div className="rate-limit-line"><Clock3 size={11} />{item.error_message}</div>}</div>)}</div> : <><div className="usage-list">{snapshot.windows.map((window) => <UsageBar key={window.label} window={window} accent={provider.accent} />)}</div>{snapshot.error_message && <div className="rate-limit-line"><Clock3 size={11} />{snapshot.error_message}</div>}</>}
-  </section>;
+  if (!snapshot) return <button className="overview-row is-empty" onClick={onOpen} style={{ "--provider-accent": provider.accent } as React.CSSProperties}>
+    <ProviderMark providerId={providerId} muted /><span className="overview-provider"><strong>{provider.name}</strong><code>{provider.command}</code></span><span className="overview-not-connected">Not connected</span>
+  </button>;
+  const constrained = snapshot.windows.reduce<UsageWindow | null>((current, item) => !current || item.used_pct > current.used_pct ? item : current, null);
+  const left = Math.max(0, 100 - (constrained?.used_pct ?? 0));
+  const urgency = urgencyFor(left);
+  return <button className={`overview-row ${snapshot.status !== "fresh" ? "is-stale" : ""}`} onClick={onOpen} style={{ "--provider-accent": provider.accent } as React.CSSProperties}>
+    <ProviderMark providerId={providerId} /><span className="overview-provider"><strong>{provider.name}</strong><span className={urgency}>{Math.round(left)}% left</span></span><span className="overview-meter"><i style={{ width: `${left}%` }} /></span><span className="overview-reset">{constrained?.resets_at ? formatCountdown(constrained.resets_at) : "—"}</span>
+  </button>;
+}
+
+const estimatePerMillion: Partial<Record<ProviderId, number>> = { claude: 6, codex: 3, grok: 3 };
+
+function ProviderStats({ providerId }: { providerId: ProviderId }) {
+  const [history, setHistory] = useState<HistoryPayload | null>(null);
+  useEffect(() => { void invoke<HistoryPayload>("get_history", { range: "30d" }).then(setHistory).catch(() => undefined); }, [providerId]);
+  const tokenSeries = history?.series.filter((series) => series.provider === providerId && series.unit === "tokens") || [];
+  const total = history?.summaries.find((summary) => summary.provider === providerId)?.totalTokens || 0;
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const today = tokenSeries.flatMap((series) => series.points).filter((point) => point.timestamp >= startOfToday.getTime()).reduce((sum, point) => sum + point.value, 0);
+  if (total <= 0) return null;
+  const rate = estimatePerMillion[providerId];
+  return <section className="provider-stats"><div><span>Today tokens</span><strong>{formatTokens(today)}</strong></div><div><span>30d tokens</span><strong>{formatTokens(total)}</strong></div>{rate != null && <div><span>Estimated 30d cost</span><strong>~${((total / 1_000_000) * rate).toFixed(2)}</strong></div>}<p>Estimated from token usage, not a subscription bill.</p></section>;
+}
+
+function ProviderView({ providerId, snapshots, profile, profiles, range, onRangeChange, onProfileChange, onAddAccount }: { providerId: ProviderId; snapshots: UsageSnapshot[]; profile: string; profiles: string[]; range: UsageRange; onRangeChange: (value: UsageRange) => void; onProfileChange: (value: string) => void; onAddAccount: () => void }) {
+  const provider = providerById(providerId);
+  const snapshot = snapshots[0];
+  const [identity, setIdentity] = useState<string | null>(null);
+  useEffect(() => { void invoke<AccountSetup>("get_account_setup", { provider: providerId }).then((value) => setIdentity(value.identity || null)).catch(() => setIdentity(null)); }, [providerId]);
+  return <div className="provider-view" style={{ "--provider-accent": provider.accent } as React.CSSProperties}>
+    <header className="provider-header"><div className="provider-title"><ProviderMark providerId={providerId} muted={!snapshot} /><h1>{provider.name}</h1></div><div className="provider-account"><span title={identity || undefined}>{identity || snapshot?.profile_name || "Not connected"}</span>{profiles.length > 1 ? <ProfilePicker profile={profile} profiles={profiles} onChange={onProfileChange} onAddAccount={onAddAccount} /> : <button className="add-account-button" onClick={onAddAccount} aria-label={`Add ${provider.name} account`}><Plus size={14} /></button>}</div><div className="provider-subhead"><span>{snapshot ? `Updated ${formatUpdated(snapshot.fetched_at)}` : "Waiting for a CLI login"}</span><span>{snapshot?.plan_name || "—"}</span></div></header>
+    <nav className="range-tabs" aria-label={`${provider.name} usage range`}>{(["now", "24h", "7d", "30d"] as UsageRange[]).map((option) => <button key={option} className={range === option ? "active" : ""} onClick={() => onRangeChange(option)}>{option === "now" ? "Now" : option}</button>)}</nav>
+    {range === "now" ? <div className="provider-now">{!snapshot ? <div className="provider-empty"><strong>Not connected</strong><span>Sign in to see your live limits.</span><code>{provider.command}</code></div> : <>{snapshots.map((item) => <section className="profile-usage" key={item.profile_name}>{profile === "All" && <h2>{item.profile_name}</h2>}{item.status !== "fresh" && <div className="stale-line">Stale since {formatTime(item.fetched_at)}</div>}{item.windows.map((usageWindow, index) => <UsageBar key={`${item.profile_name}-${usageWindow.label}-${index}`} window={usageWindow} accent={provider.accent} />)}{item.error_message && <p className="provider-message">{item.error_message}</p>}</section>)}<ProviderStats providerId={providerId} /></>}</div> : <HistoryView range={range} providerId={providerId} />}
+  </div>;
+}
+
+function formatUpdated(value: string) {
+  const minutes = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 60_000));
+  return minutes < 1 ? "just now" : `${minutes}m ago`;
 }
 
 function formatTokens(value: number) {
@@ -211,7 +239,7 @@ function HistoryChart({ title, unit, series, range }: { title: string; unit: "to
   </section>;
 }
 
-function HistoryView({ range }: { range: Exclude<UsageRange, "now"> }) {
+function HistoryView({ range, providerId }: { range: Exclude<UsageRange, "now">; providerId: ProviderId }) {
   const [history, setHistory] = useState<HistoryPayload | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -233,20 +261,18 @@ function HistoryView({ range }: { range: Exclude<UsageRange, "now"> }) {
   }, [range]);
   if (!history && !error) return <div className="history-loading"><RefreshCw size={14} /> Reading local usage history…</div>;
   if (error) return <div className="history-empty"><strong>History is unavailable</strong><span>{error}</span></div>;
-  const tokenSeries = history?.series.filter((series) => series.unit === "tokens") || [];
+  const tokenSeries = history?.series.filter((series) => series.provider === providerId && series.unit === "tokens") || [];
   const percentPriority = ["percent:5h", "percent:Credits", "percent:Weekly", "percent:Monthly"];
-  const percentSeries = PROVIDERS.flatMap((provider) => {
-    const candidates = history?.series.filter((series) => series.provider === provider.id && series.unit === "percent") || [];
-    return candidates.sort((left, right) => percentPriority.indexOf(left.kind) - percentPriority.indexOf(right.kind)).slice(0, 1);
-  });
+  const percentSeries = (history?.series.filter((series) => series.provider === providerId && series.unit === "percent") || [])
+    .sort((left, right) => percentPriority.indexOf(left.kind) - percentPriority.indexOf(right.kind));
   const hasHistory = tokenSeries.some((series) => series.points.length) || percentSeries.some((series) => series.points.length);
   return <div className="history-view">
     {history?.importing && <div className="importing-history"><span /> Importing history</div>}
     {!hasHistory && <div className="history-empty"><strong>No usage in this range</strong><span>{history?.message || "Burnrate will keep honest local samples as they appear."}</span></div>}
     {tokenSeries.length > 0 && <HistoryChart title="Local CLI activity" unit="tokens" series={tokenSeries} range={range} />}
     {percentSeries.length > 0 && <HistoryChart title="Live limit snapshots" unit="percent" series={percentSeries} range={range} />}
-    <section className="history-summary-card"><div className="summary-heading"><span>BY PROVIDER</span><span>{range.toUpperCase()}</span></div>{history?.summaries.map((summary) => <div className="history-summary-row" key={summary.provider}><ProviderMark providerId={summary.provider} /><div className="summary-provider"><strong>{providerById(summary.provider).name}</strong><span>{summary.since ? `History since ${formatDay(summary.since)}` : "No history in range"}</span></div><div className="summary-values"><strong>{summary.totalTokens > 0 ? formatTokens(summary.totalTokens) : summary.peakPercent != null ? `${Math.round(summary.peakPercent)}% peak` : "—"}</strong><span>{summary.totalTokens > 0 ? `Most active ${summary.mostActiveDay ? formatDay(summary.mostActiveDay) : "—"}` : `${summary.limitHits} limit hits`}</span></div></div>)}</section>
-    {history?.series.some((series) => series.unit === "context_tokens") && <p className="history-footnote">Grok session context snapshots are stored separately from tokens/day because they are cumulative, not per-message usage.</p>}
+    <section className="history-summary-card"><div className="summary-heading"><span>SUMMARY</span><span>{range.toUpperCase()}</span></div>{history?.summaries.filter((summary) => summary.provider === providerId).map((summary) => <div className="history-summary-row" key={summary.provider}><ProviderMark providerId={summary.provider} /><div className="summary-provider"><strong>{providerById(summary.provider).name}</strong><span>{summary.since ? `History since ${formatDay(summary.since)}` : "No history in range"}</span></div><div className="summary-values"><strong>{summary.totalTokens > 0 ? formatTokens(summary.totalTokens) : summary.peakPercent != null ? `${Math.round(summary.peakPercent)}% peak` : "—"}</strong><span>{summary.totalTokens > 0 ? `Most active ${summary.mostActiveDay ? formatDay(summary.mostActiveDay) : "—"}` : `${summary.limitHits} limit hits`}</span></div></div>)}</section>
+    {history?.series.some((series) => series.provider === providerId && series.unit === "context_tokens") && <p className="history-footnote">Grok session context snapshots are stored separately from tokens/day because they are cumulative, not per-message usage.</p>}
   </div>;
 }
 
@@ -335,13 +361,15 @@ function Settings({ settings, onSettingsChange, profiles, onDelete, onSave, onSa
 
 export default function App() {
   const { snapshots, setSnapshots, refreshing, refresh } = useMockSnapshots();
-  const [view, setView] = useState<View>(window.location.hash === "#settings" ? "settings" : "overview");
+  const [view, setView] = useState<View>(window.location.hash === "#settings" ? "settings" : "usage");
+  const [activeTab, setActiveTab] = useState<UsageTab>("overview");
   const [range, setRange] = useState<UsageRange>("now");
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [profiles, setProfiles] = useState<Record<ProviderId, string[]>>({ claude: ["Personal"], codex: ["Personal"], grok: ["Personal"], cursor: [], opencode: [] });
   const [activeProfiles, setActiveProfiles] = useState<Record<ProviderId, string>>({ claude: "Personal", codex: "Personal", grok: "Personal", cursor: "Personal", opencode: "Personal" });
   const [addingAccount, setAddingAccount] = useState<ProviderId | null>(null);
   const visibleProviders = useMemo(() => PROVIDERS.filter((provider) => settings.enabled[provider.id]), [settings.enabled]);
+  const shortcut = /Macintosh|Mac OS X/.test(navigator.userAgent) ? "Cmd" : "Ctrl";
   useEffect(() => { document.documentElement.dataset.theme = settings.theme; }, [settings.theme]);
   useEffect(() => {
     let cancelled = false;
@@ -372,6 +400,18 @@ export default function App() {
   }, []);
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => { const timer = window.setInterval(() => void refresh(), settings.refreshSeconds * 1000); return () => window.clearInterval(timer); }, [refresh, settings.refreshSeconds]);
+  useEffect(() => {
+    if (activeTab !== "overview" && !settings.enabled[activeTab]) setActiveTab("overview");
+  }, [activeTab, settings.enabled]);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey)) return;
+      if (event.key.toLowerCase() === "r") { event.preventDefault(); void refresh(); }
+      if (event.key === ",") { event.preventDefault(); setView("settings"); }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [refresh]);
   const snapshotsFor = (provider: ProviderId) => {
     const matches = snapshots.filter((snapshot) => snapshot.provider === provider && (activeProfiles[provider] === "All" || snapshot.profile_name === activeProfiles[provider]));
     return matches;
@@ -407,8 +447,10 @@ export default function App() {
     setActiveProfiles((current) => ({ ...current, [provider]: result.profileName }));
     void refresh();
   };
-  return <main className="app-shell"><header className="app-header" data-tauri-drag-region><div className="brand" data-tauri-drag-region><span className="brand-mark" data-tauri-drag-region><i /><i /><i /></span><span data-tauri-drag-region>Burnrate</span></div><div className="header-actions"><button className="icon-button" onClick={() => void refresh()} aria-label="Refresh" data-refreshing={refreshing}><RefreshCw size={15} /></button><button className={`icon-button ${view === "settings" ? "is-active" : ""}`} onClick={() => setView(view === "settings" ? "overview" : "settings")} aria-label="Settings"><Settings2 size={15} /></button><button className="icon-button" onClick={() => void getCurrentWindow().close()} aria-label="Close"><X size={15} /></button></div></header>
-    {view === "overview" ? <><nav className="usage-tabs" aria-label="Usage range">{(["now", "24h", "7d", "30d"] as UsageRange[]).map((option) => <button key={option} className={range === option ? "active" : ""} onClick={() => setRange(option)}>{option === "now" ? "Now" : option}</button>)}</nav>{range === "now" ? <div className="cards">{visibleProviders.map((provider) => <ProviderCard key={provider.id} providerId={provider.id} snapshots={snapshotsFor(provider.id)} profile={activeProfiles[provider.id]} profiles={profiles[provider.id] || ["Personal"]} onProfileChange={(profile) => setActiveProfiles((current) => ({ ...current, [provider.id]: profile }))} onAddAccount={() => setAddingAccount(provider.id)} />)}</div> : <HistoryView range={range} />}</> : <Settings settings={settings} onSettingsChange={changeSettings} profiles={profiles} onDelete={deleteProfile} onSave={saveProfile} onSaveManual={saveManual} />}
+  return <main className="app-shell"><header className="window-header" data-tauri-drag-region><div className="brand" data-tauri-drag-region><span className="brand-mark" data-tauri-drag-region><i /><i /><i /></span><span data-tauri-drag-region>Burnrate</span></div><button className="icon-button" onClick={() => void getCurrentWindow().close()} aria-label="Close"><X size={15} /></button></header>
+    <nav className="provider-tabs" aria-label="Provider tabs"><button className={view === "usage" && activeTab === "overview" ? "active overview" : ""} onClick={() => { setView("usage"); setActiveTab("overview"); }}>Overview</button>{visibleProviders.map((provider) => <button key={provider.id} className={view === "usage" && activeTab === provider.id ? "active" : ""} style={{ "--provider-accent": provider.accent } as React.CSSProperties} onClick={() => { setView("usage"); setActiveTab(provider.id); setRange("now"); }}><ProviderMark providerId={provider.id} /><span>{provider.name}</span></button>)}</nav>
+    <div className="content-scroll">{view === "settings" ? <Settings settings={settings} onSettingsChange={changeSettings} profiles={profiles} onDelete={deleteProfile} onSave={saveProfile} onSaveManual={saveManual} /> : activeTab === "overview" ? <div className="overview-view"><header><h1>Overview</h1><p>Most constrained limit for each provider</p></header><div className="overview-list">{visibleProviders.map((provider) => <OverviewRow key={provider.id} providerId={provider.id} snapshots={snapshotsFor(provider.id)} onOpen={() => { setActiveTab(provider.id); setRange("now"); }} />)}</div></div> : <ProviderView providerId={activeTab} snapshots={snapshotsFor(activeTab)} profile={activeProfiles[activeTab]} profiles={profiles[activeTab] || ["Personal"]} range={range} onRangeChange={setRange} onProfileChange={(profile) => setActiveProfiles((current) => ({ ...current, [activeTab]: profile }))} onAddAccount={() => setAddingAccount(activeTab)} />}</div>
+    <footer className="bottom-bar"><button onClick={() => void refresh()} data-refreshing={refreshing}><RefreshCw size={15} /><span>Refresh</span><kbd>{shortcut}+R</kbd></button><button className={view === "settings" ? "active" : ""} onClick={() => setView(view === "settings" ? "usage" : "settings")}><Settings2 size={15} /><span>Settings</span><kbd>{shortcut}+,</kbd></button></footer>
     {addingAccount && <AddAccountDialog providerId={addingAccount} onClose={() => setAddingAccount(null)} onComplete={(result) => completeAddAccount(addingAccount, result)} />}
     </main>;
 }

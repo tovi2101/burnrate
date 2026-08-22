@@ -29,8 +29,9 @@ The cask in `packaging/homebrew/burnrate.rb` is ready for the `tovi2101/homebrew
 brew install --cask tovi2101/tap/burnrate
 ```
 
-The macOS build is universal (Apple Silicon and Intel). Because it is unsigned, Gatekeeper may
-block its first launch. Right-click Burnrate and choose **Open**, or run:
+The macOS build is universal (Apple Silicon and Intel). Until a signed build is available, Gatekeeper
+may block its first launch. Right-click Burnrate and choose **Open Anyway** (or use System Settings →
+Privacy & Security → Open Anyway), or run:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/Burnrate.app
@@ -129,9 +130,11 @@ tokens, refresh tokens, cookies, or raw authorization headers.
 
 ## Screenshots
 
-![Burnrate Now view with live provider usage](screenshots/v2-now.png)
+![Burnrate provider overview with live usage](screenshots/v13-overview.png)
 
-![Burnrate 30-day real usage history](screenshots/v2-history-30d.png)
+![Burnrate Codex provider detail](screenshots/v13-provider-codex.png)
+
+![Burnrate provider history](screenshots/v13-history.png)
 
 ![Burnrate settings in the t3code design language](screenshots/v2-settings.png)
 
@@ -143,9 +146,9 @@ tokens, refresh tokens, cookies, or raw authorization headers.
 
 ## Attribution
 
-Provider endpoint research is based on [CodexBar by Peter Steinberger](https://github.com/steipete/CodexBar),
-MIT licensed. The checked-in `references/` directory is development research only and is excluded
-from published builds.
+Provider endpoint research and popover layout inspiration are based on
+[CodexBar by Peter Steinberger](https://github.com/steipete/CodexBar), MIT licensed. The checked-in
+`references/` directory is development research only and is excluded from published builds.
 
 Provider names and marks are trademarks of their respective owners and are used for identification
 only. Burnrate is not affiliated with or endorsed by any provider.
